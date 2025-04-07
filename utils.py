@@ -1,6 +1,7 @@
 import zarr
 import numpy as np
 import os
+import torch
 
 def load_zarr_files(directory_list):
     """
@@ -18,7 +19,7 @@ def load_zarr_files(directory_list):
         zarr_arrays.append(arr)
     return zarr_arrays
 
-def files_to_img(z_arrays):
+def files_to_img(z_arrays, verbose=False):
     """
     Convert Zarr arrays to images.
 
@@ -29,10 +30,15 @@ def files_to_img(z_arrays):
         list: List of images.
     """
     images = []
+    num_imges = 0
     for arr in z_arrays:
         img = arr[:]
         images.append(img)
-    images = np.array(images)
+        num_imges += img.shape[0]
+        if verbose:
+            print(f"Loaded image shape: {img.shape}")
+    images = np.concatenate(images, axis=0)
+    assert num_imges == images.shape[0], "Number of images mismatch"
     if images.ndim == 3:
         images = np.expand_dims(images, axis=-1)
     assert images.ndim == 4, "Images should be 4D after conversion"
@@ -54,5 +60,23 @@ def get_imgs(directory_list):
 
 def get_directories(path, sub_dir="images"):
     """"""
-    directories  = [os.path.join(path, sub_dir) for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
+    directories  = [os.path.join(path,d, sub_dir) for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
     return directories
+
+def mount_images_to_torch(imgs, device):
+    """
+    Mounts the images to torch tensors
+    """
+    imgs = torch.from_numpy(imgs).to(device)
+    return imgs
+
+def get_device():
+    """
+    Get the device to use for torch
+    """
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+            
+    return device
