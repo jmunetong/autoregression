@@ -26,18 +26,22 @@ def preprocess_images(img:np.ndarray):
 
 # Define a dataset that loads your images.
 class XrdDataset(Dataset):
-    def __init__(self, data_dir, feature_extractor=None):
+    def __init__(self, data_dir, feature_extractor=None, img_blocks=40):
         self.image_dir = data_dir
         self.image_files = get_directories(data_dir)
         self.feature_extractor = feature_extractor
+        self.img_blocks = img_blocks
     def __len__(self):
         return len(self.image_files)
 
     def __getitem__(self, idx):
+        print(f"Loading {self.image_files[idx]}")
         img,_ = get_imgs([self.image_files[idx]])
         img = preprocess_images(img)
         img = torch.from_numpy(img).float()
         if self.feature_extractor:
             img = img.squeeze(0)
             img = self.feature_extractor(img, return_tensors="pt").pixel_values
+        
         return img
+
