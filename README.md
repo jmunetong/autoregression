@@ -14,3 +14,8 @@ https://huggingface.co/blog/fine-tune-vit
 ## Important!!
 Ignore file 
 data/mfxl1027522_r0030_peaknet.0075.zarr/images
+
+
+### Requesting a gpu
+
+srun -p gpu-pascal --gres=gpu:1 --pty bash
