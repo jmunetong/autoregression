@@ -36,12 +36,25 @@ def run(args):
             if batch.ndim > 4:
                 batch = einops.rearrange(batch, 'd b c h w -> (d b) c h w')
 
+            batch = batch.to(device)
+            optimizer.zero_grad()
+            recon_batch = vae(batch)
+            loss = criterion(recon_batch, batch)
+            loss.backward()
+            optimizer.step()
+            if i % 10 == 0:
+                print(f"Batch {i}, Loss: {loss.item()}")
+
+    torch.save(vae.state_dict(), "vae_model.pth")
+
+        
+
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
-    parser.add_argument("--batch_size", "-b", type=int, default=2, help="Batch size for training")
+    parser.add_argument("--batch_size", "-b", type=int, default=1, help="Batch size for training")
     parser.add_argument("--num_epochs", "-e", type=int, default=10, help="Number of epochs for training")
     args = parser.parse_args()
     run(args)
