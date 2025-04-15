@@ -1,9 +1,13 @@
 import os
+import sys
 
 import zarr
+from accelerate import Accelerator
+import wandb
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+import torch.nn.functional as F
 from torch import nn, optim
 import einops
 from transformers import ViTForImageClassification, ViTImageProcessor, ViTFeatureExtractor, ViTConfig, ViTModel, pipeline
@@ -20,54 +24,71 @@ URL_MODEL = "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/blob/main
 NUM_DETECTORS = 40
 
 
-def elbo_loss(x, x_recon, mu, logvar, beta_1, beta_2):
-    """
-    Compute the ELBO loss.
-    """
-    BCE = nn.functional.binary_cross_entropy(x_recon, x.view(-1, 28*28), reduction='sum')
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return BCE + beta_1 * KLD
-
 
 def run(args):
+    beta = args.beta
+    run_logger = wandb.init(project="vae_kl_tunning", config=args)
     feature_extractor = ViTImageProcessor.from_pretrained(FEATURE_EXTRACTOR_PATH)
     dataset = XrdDataset(data_dir=args.data_path,    feature_extractor=feature_extractor)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     device = get_device()
     print(f'Current CUDA device is:{device}')
     vae = AutoencoderKL.from_single_file(URL_MODEL)
-    vae.to(device)
+    # vae.to(device)
     vae.train()
-    
-
     optimizer = optim.Adam(vae.parameters(), lr=1e-4)
-    criterion = nn.MSELoss()
+    accelerator = Accelerator()
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+    vae, optimizer, dataloader, lr_scheduler = accelerator.prepare(
+    vae, optimizer, dataloader, lr_scheduler
+)
     for epoch in range(args.num_epochs):
         print(f"Epoch {epoch+1}/{args.num_epochs}")
-        for i, batch in enumerate(dataloader):
-            if batch.ndim > 4:
-                batch = einops.rearrange(batch, 'd b c h w -> (d b) c h w')
-            batch = einops.rearrange(batch, '(d b) c h w -> b d c h w', d=args.detectors_per_batch)
+        epoch_loss = 0.0
+        epoch_kl_loss = 0.0
+        epoch_recon_loss = 0.0
+        for _, batch in enumerate(dataloader):
+            batch = einops.rearrange(batch, 'b (d m) c h w -> (b m) d c h w', d=args.detectors_per_batch)
+            
             optimizer.zero_grad()
-
+            batch_loss = 0.0
+            batch_kl_loss = 0.0
+            batch_recon_loss = 0.0
+            
             for j in range(batch.shape[0]):
-                print(f"Processing batch {j+1}/{batch.shape[0]}")
-                encoder_output = vae.encode(batch[j]).latent_dist.sample()
-                # sub_batch = batch[j].to(device)
-                # decoder_output = vae(sub_batch).sample
-                # loss = criterion(decoder_output, sub_batch)
-                # loss.backward()
-                # optimizer.step()
-
+                batch_i = batch[j]
+                posterior = vae.encode(batch_i).latent_dist
+                mu_posterior = posterior.mean
+                logvar_posterior = posterior.logvar
+                kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
+                kl_loss_i /= batch_i.size(0)
                 
+                recon_i = vae.decode(posterior.sample()).sample
+                recon_loss_i = F.mse_loss(recon_i, batch_i, reduction='mean')
+                loss_i = beta * recon_loss_i + kl_loss_i
+                
+                scaled_loss = loss_i / batch.shape[0]
+                accelerator.backward(scaled_loss)
+                
+                # Track metrics
+                batch_loss += scaled_loss.item()
+                batch_kl_loss += kl_loss_i.item()
+                batch_recon_loss += recon_loss_i.item()
+            
+            # Step optimizer after accumulating gradients
             optimizer.step()
-            if i % 10 == 0:
-                print(f"Batch {i}, Loss: {loss.item()}")
+            
+        # Update epoch metrics with batch averages
+        lr_scheduler.step()
+        epoch_loss = batch_loss / len(dataloader)
+        epoch_kl_loss /= len(dataloader)
+        epoch_recon_loss /= len(dataloader)
+    
 
-    torch.save(vae.state_dict(), "vae_model.pth")
+        print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+        run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
 
-        
-
+        torch.save(vae.state_dict(), "vae_model.pth")
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
@@ -75,6 +96,7 @@ if __name__ == '__main__':
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
     parser.add_argument("--batch_size", "-b", type=int, default=1, help="Batch size for training")
     parser.add_argument("--detectors_per_batch", type=int, default=8, help="Number of detectors per batch")
-    parser.add_argument("--num_epochs", "-e", type=int, default=10, help="Number of epochs for training")
+    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
+    parser.add_argument("--beta", type=float, default=0.1, help="weight MSE Loss")
     args = parser.parse_args()
     run(args)
