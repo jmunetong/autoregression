@@ -19,6 +19,16 @@ DATA_PATH = "data"
 URL_MODEL = "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/blob/main/vae-ft-mse-840000-ema-pruned.safetensors"
 NUM_DETECTORS = 40
 
+
+def elbo_loss(x, x_recon, mu, logvar, beta_1, beta_2):
+    """
+    Compute the ELBO loss.
+    """
+    BCE = nn.functional.binary_cross_entropy(x_recon, x.view(-1, 28*28), reduction='sum')
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    return BCE + beta_1 * KLD
+
+
 def run(args):
     feature_extractor = ViTImageProcessor.from_pretrained(FEATURE_EXTRACTOR_PATH)
     dataset = XrdDataset(data_dir=args.data_path,    feature_extractor=feature_extractor)
@@ -42,11 +52,12 @@ def run(args):
 
             for j in range(batch.shape[0]):
                 print(f"Processing batch {j+1}/{batch.shape[0]}")
-                sub_batch = batch[j].to(device)
-                decoder_output = vae(sub_batch).sample
-                loss = criterion(decoder_output, sub_batch)
-                loss.backward()
-                optimizer.step()
+                encoder_output = vae.encode(batch[j]).latent_dist.sample()
+                # sub_batch = batch[j].to(device)
+                # decoder_output = vae(sub_batch).sample
+                # loss = criterion(decoder_output, sub_batch)
+                # loss.backward()
+                # optimizer.step()
 
                 
             optimizer.step()
