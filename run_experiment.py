@@ -42,6 +42,7 @@ def run(args):
     vae, optimizer, dataloader, lr_scheduler = accelerator.prepare(
     vae, optimizer, dataloader, lr_scheduler
 )
+    best_loss = float('inf')
     for epoch in range(args.num_epochs):
         print(f"Epoch {epoch+1}/{args.num_epochs}")
         epoch_loss = 0.0
@@ -83,13 +84,22 @@ def run(args):
         epoch_loss = batch_loss / len(dataloader)
         epoch_kl_loss /= len(dataloader)
         epoch_recon_loss /= len(dataloader)
+        if epoch_loss < best_loss:
+            best_loss = epoch_loss
+            print(f"New best loss: {best_loss}")
+            # Save the model
+            torch.save(vae.state_dict(), "vae_model.pth")
+            try:
+                vae.save_pretrained("vae_model")
+                feature_extractor.save_pretrained("feature_extractor")
+            except Exception as e:
+                print(f"Error saving feature extractor: {e}")
     
 
         print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
         run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
 
-        torch.save(vae.state_dict(), "vae_model.pth")
-
+        
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()

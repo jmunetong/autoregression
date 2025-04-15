@@ -6,6 +6,8 @@ __pycache__/
 *.out
 *.pth
 wandb/
+vae_model/
+feature_extractor/
 # C extensions
 *.so
 
