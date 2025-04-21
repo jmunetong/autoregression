@@ -178,3 +178,5 @@ cython_debug/
 data/*
 testing.ipynb
 test_yarong.ipynb
+5422/*
+vae_model/*
