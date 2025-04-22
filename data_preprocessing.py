@@ -7,11 +7,9 @@ from torchvision import transforms, load_zar_files
 from PIL import Image
 import numpy as np
 
-from utils import get_directories, get_imgs
+from utils import get_directories, get_imgs, files_to_img
 
 def preprocess_images(img:np.ndarray):
-    min_value = img.min()
-    max_value = img.max()
     img = (img - img.mean()) / (img.std() + 1e-6)
     if img.ndim == 3:
         img = img.expand_dims(0)
@@ -43,7 +41,8 @@ class XrdDataset(Dataset):
 
     def __getitem__(self, idx):
         print(f"Loading {self.image_files[idx]}")
-        img,_ = get_imgs([self.image_files[idx]])
+        document_id, sample_id = self.idx_files[idx]
+        img = files_to_img([self.image_files[document_id]], sample_id) # TODO: 
         img = preprocess_images(img)
         img = torch.from_numpy(img).float()
         print(img.std())

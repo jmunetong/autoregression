@@ -20,7 +20,7 @@ def load_zarr_files(directory_list):
         zarr_arrays.append(arr)
     return zarr_arrays
 
-def files_to_img(z_arrays, verbose=False):
+def files_to_img(z_arrays, sample_id = None, verbose=False):
     """
     Convert Zarr arrays to images.
 
@@ -33,7 +33,7 @@ def files_to_img(z_arrays, verbose=False):
     images = []
     num_imges = 0
     for arr in z_arrays:
-        img = arr[:]
+        img = arr[:] if sample_id is None else arr[sample_id]
         images.append(img)
         num_imges += img.shape[0]
         if verbose:
@@ -47,19 +47,19 @@ def files_to_img(z_arrays, verbose=False):
 
 
 
-def get_imgs(directory_list):
-    """
-    Get images from Zarr files in the specified directories.
+# def get_imgs(directory_list):
+#     """
+#     Get images from Zarr files in the specified directories.
 
-    Args:
-        directory_list (list): List of directories containing Zarr files.
+#     Args:
+#         directory_list (list): List of directories containing Zarr files.
 
-    Returns:
-        tuple: Tuple containing the list of images and the list of Zarr arrays.
-    """
-    z_arrays = load_zarr_files(directory_list)
-    images = files_to_img(z_arrays)
-    return images, z_arrays
+#     Returns:
+#         tuple: Tuple containing the list of images and the list of Zarr arrays.
+#     """
+#     z_arrays = load_zarr_files(directory_list)
+#     images = files_to_img(z_arrays)
+#     return images, z_arrays
 
 def get_directories(path, sub_dir="images"):
     """"""
