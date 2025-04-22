@@ -50,32 +50,28 @@ def run(args):
         epoch_kl_loss = 0.0
         epoch_recon_loss = 0.0
         for _, batch in enumerate(dataloader):
-            batch = einops.rearrange(batch, 'b (d m) c h w -> (b m) d c h w', d=args.detectors_per_batch)
-            
             optimizer.zero_grad()
-            batch_loss = 0.0
-            batch_kl_loss = 0.0
-            batch_recon_loss = 0.0
+
+            ## Encoding Step
+            posterior = vae.encode(batch).latent_dist
+            mu_posterior = posterior.mean
+            logvar_posterior = posterior.logvar
+
+            # Decoding step
+            recon_i = vae.decode(posterior.sample()).sample
             
-            for j in range(batch.shape[0]):
-                batch_i = batch[j]
-                posterior = vae.encode(batch_i).latent_dist
-                mu_posterior = posterior.mean
-                logvar_posterior = posterior.logvar
-                kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
-                kl_loss_i /= batch_i.size(0)
-                
-                recon_i = vae.decode(posterior.sample()).sample
-                recon_loss_i = F.mse_loss(recon_i, batch_i, reduction='mean')
-                loss_i = beta * recon_loss_i + kl_loss_i
-                
-                scaled_loss = loss_i / batch.shape[0]
-                accelerator.backward(scaled_loss)
-                
-                # Track metrics
-                batch_loss += scaled_loss.item()
-                batch_kl_loss += kl_loss_i.item()
-                batch_recon_loss += recon_loss_i.item()
+            # Loss Function Computation
+            kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
+            kl_loss_i /= batch.size(0)
+            recon_loss_i = F.mse_loss(recon_i, batch, reduction='mean')
+            loss_i = beta * recon_loss_i + kl_loss_i
+            
+            accelerator.backward(loss_i)
+            
+            # Track metrics
+            batch_loss += loss_i.item()
+            batch_kl_loss += kl_loss_i.item()
+            batch_recon_loss += recon_loss_i.item()
             
             # Step optimizer after accumulating gradients
             optimizer.step()
@@ -105,7 +101,7 @@ if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
-    parser.add_argument("--batch_size", "-b", type=int, default=1, help="Batch size for training")
+    parser.add_argument("--batch_size", "-b", type=int, default=8, help="Batch size for training")
     parser.add_argument("--detectors_per_batch", type=int, default=8, help="Number of detectors per batch")
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
     parser.add_argument("--beta", type=float, default=0.1, help="weight MSE Loss")

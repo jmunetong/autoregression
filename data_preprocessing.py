@@ -43,7 +43,6 @@ class XrdDataset(Dataset):
 
     def __getitem__(self, idx):
         print(f'This is idx number:{idx}')
-        print(f"Loading {self.image_files[idx]}")
         document_id, sample_id = self.idx_files[idx]
         img = files_to_img([self.zarr_pointers[document_id]], sample_id) # TODO: 
         img = preprocess_images(img)

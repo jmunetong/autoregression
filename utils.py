@@ -35,10 +35,16 @@ def files_to_img(z_arrays, sample_id = None, verbose=False):
     for arr in z_arrays:
         img = arr[:] if sample_id is None else arr[sample_id]
         images.append(img)
-        num_imges += img.shape[0]
+        num_imges += img.shape[0] if sample_id is None else 1
         if verbose:
             print(f"Loaded image shape: {img.shape}")
-    images = np.concatenate(images, axis=0)
+    if sample_id is None:
+        images = np.concatenate(images, axis=0)
+    else:
+        images = np.array(images)
+    
+    print(images.shape, " Shape of")
+    print(num_imges)
     assert num_imges == images.shape[0], "Number of images mismatch"
     if images.ndim == 3:
         images = np.expand_dims(images, axis=-1)
