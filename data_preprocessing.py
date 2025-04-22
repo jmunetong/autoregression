@@ -1,13 +1,13 @@
 
 import os
+
 import torch
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, load_zar_files
-from PIL import Image
+from torchvision import transforms
 import numpy as np
 
-from utils import get_directories, get_imgs, files_to_img
+from utils import get_directories, files_to_img, load_zarr_files
 
 def preprocess_images(img:np.ndarray):
     img = (img - img.mean()) / (img.std() + 1e-6)
@@ -27,7 +27,9 @@ class XrdDataset(Dataset):
     def __init__(self, data_dir, feature_extractor=None, rescale=False, img_blocks=40):
         self.image_dir = data_dir
         self.image_files = get_directories(data_dir)
-        self.zar_pointers = load_zar_files(self.image_files)
+        print(type(self.image_files))
+        print(self.image_files)
+        self.zarr_pointers = load_zarr_files(self.image_files)
         self._preprocess_indeces()
         self.feature_extractor = feature_extractor
         self.img_blocks = img_blocks
@@ -37,12 +39,13 @@ class XrdDataset(Dataset):
         return len(self.idx_files)
     
     def _preprocess_indeces(self):  
-        self.idx_files = [(i, j) for i, file in self.image_files for j in range(file[i].shape[0])]
+        self.idx_files = [(i, j) for i, file in enumerate(self.zarr_pointers) for j in range(file.shape[0])]
 
     def __getitem__(self, idx):
+        print(f'This is idx number:{idx}')
         print(f"Loading {self.image_files[idx]}")
         document_id, sample_id = self.idx_files[idx]
-        img = files_to_img([self.image_files[document_id]], sample_id) # TODO: 
+        img = files_to_img([self.zarr_pointers[document_id]], sample_id) # TODO: 
         img = preprocess_images(img)
         img = torch.from_numpy(img).float()
         print(img.std())

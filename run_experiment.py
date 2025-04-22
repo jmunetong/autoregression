@@ -1,7 +1,6 @@
 import os
 import sys
 
-import zarr
 from accelerate import Accelerator
 import wandb
 import numpy as np
@@ -10,12 +9,12 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim
 import einops
-from transformers import ViTForImageClassification, ViTImageProcessor, ViTFeatureExtractor, ViTConfig, ViTModel, pipeline
+from transformers import  ViTImageProcessor
 from diffusers import AutoencoderKL
 from torch.utils.data import DataLoader
 
-from utils import get_directories, get_imgs, get_device
-from data_preprocessing import preprocess_images,XrdDataset
+from utils import get_device
+from data_preprocessing import XrdDataset
 
 
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
