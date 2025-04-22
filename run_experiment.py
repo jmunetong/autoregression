@@ -42,6 +42,8 @@ def run(args):
     vae, optimizer, dataloader, lr_scheduler = accelerator.prepare(
     vae, optimizer, dataloader, lr_scheduler
 )
+    total_params = sum(p.numel() for p in vae.parameters())
+    print(f'Total parameters: {total_params:,}')
     best_loss = float('inf')
     for epoch in range(args.num_epochs):
         print(f"Epoch {epoch+1}/{args.num_epochs}")
@@ -82,8 +84,8 @@ def run(args):
         # Update epoch metrics with batch averages
         lr_scheduler.step()
         epoch_loss = batch_loss / len(dataloader)
-        epoch_kl_loss /= len(dataloader)
-        epoch_recon_loss /= len(dataloader)
+        epoch_kl_loss = batch_kl_loss/len(dataloader)
+        epoch_recon_loss = batch_recon_loss/ len(dataloader)
         if epoch_loss < best_loss:
             best_loss = epoch_loss
             print(f"New best loss: {best_loss}")
