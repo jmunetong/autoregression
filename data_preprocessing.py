@@ -9,7 +9,25 @@ import numpy as np
 
 from utils import get_directories, get_imgs
 
+# # Data preprocessing using standard normalization
+# def preprocess_images(img:np.ndarray):
+#     mean_value = img.mean()
+#     img = (img - mean_value) / (img.std() + 1e-6)
+#     if img.ndim == 3:
+#         img = img.expand_dims(0)
+#     if img.shape[-1]==1:
+#         img = img.repeat(3, axis=-1)
+#     img[:,10:, :] = 0
+#     img[:,:, :10]  = 0
+#     img[:,-10:,:]  = 0
+#     img[:,:, -10:] = 0
+#     print("min", img.min(), "max",img.max())
+#     return img
+
+# Data preprocessing using min-max normalization
 def preprocess_images(img:np.ndarray):
+    # img = np.log1p(img)
+    print("min before normalization", img.min(), "max before normalization",img.max())
     min_value = img.min()
     max_value = img.max()
     img = (img - min_value) / (max_value - min_value)
