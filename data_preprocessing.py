@@ -47,16 +47,12 @@ class XrdDataset(Dataset):
         img = files_to_img([self.zarr_pointers[document_id]], sample_id) 
         img = preprocess_images(img)
         img = torch.from_numpy(img).float()
-        dim_max = max(img.shape[2:])
-  
-
         
         if self.apply_pool:
             img = einops.rearrange(img, 'b h w c -> b c h w')
             img = self.avg_pooler(img)
             min_dim = min(img.shape[2:])
             img = img[:,:, :min_dim, :min_dim]
-
 
         if self.feature_extractor:
             img = img.squeeze(0)

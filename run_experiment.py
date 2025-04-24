@@ -1,6 +1,7 @@
 import os
 import sys
 
+from tqdm import tqdm
 from accelerate import Accelerator
 import wandb
 import numpy as np
@@ -73,11 +74,12 @@ def run(args):
         epoch_kl_loss = 0.0
         epoch_recon_loss = 0.0
         
-        for _, batch in enumerate(dataloader):
+        for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), desc="Training"):
             optimizer.zero_grad()
-
-            print(batch.shape)
             
+            if i == 0 and epoch == 0:
+                print(f"Batch shape: {batch.shape}")
+
             ## Encoding Step
             posterior = vae.encode(batch).latent_dist
             mu_posterior = posterior.mean
@@ -98,6 +100,7 @@ def run(args):
             epoch_loss += loss_i.item()
             epoch_kl_loss += kl_loss_i.item()
             epoch_recon_loss += recon_loss_i.item()
+            tqdm.write(f"Batch {i+1}/{len(dataloader)} - Loss: {loss_i.item():.4f}")
             
             # Step optimizer after accumulating gradients
             optimizer.step()
@@ -108,6 +111,11 @@ def run(args):
         epoch_kl_loss /=len(dataloader)
         epoch_recon_loss /= len(dataloader)
         
+        
+        print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+        run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
+
+
         # Saving Best model
         if epoch_loss < best_loss:
             best_loss = epoch_loss
@@ -120,8 +128,6 @@ def run(args):
                 print(f"Error saving feature extractor: {e}")
     
 
-        print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-        run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
 
         
 if __name__ == '__main__':
