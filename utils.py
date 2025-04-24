@@ -43,12 +43,10 @@ def files_to_img(z_arrays, sample_id = None, verbose=False):
     else:
         images = np.array(images)
     
-    print(images.shape, " Shape of")
-    print(num_imges)
     assert num_imges == images.shape[0], "Number of images mismatch"
-    if images.ndim == 3:
-        images = np.expand_dims(images, axis=-1)
-    assert images.ndim == 4, "Images should be 4D after conversion"
+    # if images.ndim == 3:
+    #     images = np.expand_dims(images, axis=-1)
+    # assert images.ndim == 4, "Images should be 4D after conversion"
     return images
 
 
