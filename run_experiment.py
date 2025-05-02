@@ -22,7 +22,14 @@ FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
 DATA_PATH = "data"
 URL_MODEL = "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/blob/main/vae-ft-mse-840000-ema-pruned.safetensors"
 
+EXPERIMENTS = {
+    422: 'mfxl1025422',
+    522: 'mfxl1027522'
+}
 
+RECONS_LOSS = {
+    "mse": nn.MSELoss(reduction="mean"),
+    "l1": nn.L1Loss(reduction="mean")}
 
 def vae_config_dict():
     vae_config = {
@@ -36,8 +43,25 @@ def vae_config_dict():
     }
     return vae_config
 
+def build_experiment_metadata(args):
+    metadata = {
+        "experiment": args.experiment,
+        "batch_size": args.batch_size,
+        "num_epochs": args.num_epochs,
+        "beta": args.beta,
+        "pooling": args.pooling,
+        "recons_loss": args.recons_loss,
+        "input_shape": None,
+        "latent_shape": None,
+        "avg_pooling": args.avg_pooling,
+    }
+    return metadata
+
+
+
 def run(args):
     beta = args.beta
+    experiment_dict = build_experiment_metadata(args)
     torch.cuda.empty_cache()
     # Initialize WandB
     run_logger = wandb.init(project="vae_kl_tunning", config=args)
@@ -52,10 +76,10 @@ def run(args):
     vae_config = vae_config_dict()
     vae = AutoencoderKL(**vae_config)
     vae.train()
-    
+    weight_decay = 1e-3
     # Optimizer
     # optimizer = optim.Adam(vae.parameters(), lr=1e-4)
-    optimizer = optim.AdamW(vae.parameters(), lr=1e-4, weight_decay=0.01)
+    optimizer = optim.AdamW(vae.parameters(), lr=1e-4, weight_decay=weight_decay)
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     
     # Accelerator instantiation
@@ -63,6 +87,7 @@ def run(args):
     vae, optimizer, dataloader, lr_scheduler = accelerator.prepare(
     vae, optimizer, dataloader, lr_scheduler)
     vae = vae.module if hasattr(vae, "module") else vae
+    recons_loss = RECONS_LOSS[args.recons_loss]
 
     total_params = sum(p.numel() for p in vae.parameters())
     print(f'Total parameters: {total_params:,}')
@@ -79,18 +104,26 @@ def run(args):
         for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), desc="Training"):
             optimizer.zero_grad()
             batch = batch.contiguous()
-            if i == 0 and epoch == 0:
+            if i == 0 and epoch == 0 and accelerator.is_main_process:
                 print(f"Batch shape: {batch.shape}")
             ## Encoding Step
             posterior = vae.encode(batch).latent_dist
             mu_posterior = posterior.mean
             logvar_posterior = posterior.logvar
+            
             # Decoding step
-            recon_i = vae.decode(posterior.sample()).sample
+            posterior_sample = posterior.sample()
+            if i == 0 and epoch == 0 and accelerator.is_main_process:
+                experiment_dict["input_shape"] = batch.shape[1:]
+                experiment_dict["latent_shape"] = posterior_sample.shape[1:]
+                print(f"Batch shape: {batch.shape}")
+                print(f"Posterior sample shape: {posterior_sample.shape}")
+            
+            recon_i = vae.decode(posterior_sample).sample
             # Loss Function Computation
             kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
             kl_loss_i /= batch.size(0)
-            recon_loss_i = F.mse_loss(recon_i, batch, reduction='mean')
+            recon_loss_i = recons_loss(recon_i, batch)
             loss_i = beta * recon_loss_i + kl_loss_i
             
             accelerator.backward(loss_i)
@@ -136,8 +169,11 @@ if __name__ == '__main__':
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
     parser.add_argument("--batch_size", "-b", type=int, default=4, help="Batch size for training")
     # parser.add_argument("--detectors_per_batch", type=int, default=8, help="Number of detectors per batch")
-    parser.add_argument("--num_epochs", "-e", type=int, default=10, help="Number of epochs for training")
+    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
     parser.add_argument("--beta", type=float, default=0.1, help="weight MSE Loss")
     parser.add_argument("--pooling", type=bool, default=True, help="Apply pooling to the images")
+    parser.add_argument("--experiment", type=int, default=422, choices=[422, 522], help="Experiment number")
+    parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
+    parser.add_argument("--avg_pooling", type=bool, default=False, help="Apply average pooling to the images")
     args = parser.parse_args()
     run(args)

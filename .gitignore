@@ -182,3 +182,4 @@ data/*
 testing.ipynb
 peaknet10k/
 /peaknet10k
+vae_model/
