@@ -16,8 +16,10 @@ def load_zarr_files(directory_list):
     """
     zarr_arrays = []
     for directory in directory_list:
-        arr = zarr.open(directory, mode='r')
-        zarr_arrays.append(arr)
+        print(directory)
+        if 'mfxl1027522' in directory: #TODO: Fix this. This is temporary to be able to run experiments
+            arr = zarr.open(directory, mode='r')
+            zarr_arrays.append(arr)
     return zarr_arrays
 
 def files_to_img(z_arrays, sample_id = None, verbose=False):

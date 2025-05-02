@@ -38,12 +38,12 @@ def vae_config_dict():
 
 def run(args):
     beta = args.beta
-
+    torch.cuda.empty_cache()
     # Initialize WandB
     run_logger = wandb.init(project="vae_kl_tunning", config=args)
     # feature_extractor = ViTImageProcessor.from_pretrained(FEATURE_EXTRACTOR_PATH)
-    dataset = XrdDataset(data_dir=args.data_path)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.pooling)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
     device = get_device()
     
     print(f'Current CUDA device is:{device}')
@@ -54,13 +54,15 @@ def run(args):
     vae.train()
     
     # Optimizer
-    optimizer = optim.Adam(vae.parameters(), lr=1e-4)
+    # optimizer = optim.Adam(vae.parameters(), lr=1e-4)
+    optimizer = optim.AdamW(vae.parameters(), lr=1e-4, weight_decay=0.01)
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     
     # Accelerator instantiation
     accelerator = Accelerator()
     vae, optimizer, dataloader, lr_scheduler = accelerator.prepare(
     vae, optimizer, dataloader, lr_scheduler)
+    vae = vae.module if hasattr(vae, "module") else vae
 
     total_params = sum(p.numel() for p in vae.parameters())
     print(f'Total parameters: {total_params:,}')
@@ -76,18 +78,15 @@ def run(args):
         
         for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), desc="Training"):
             optimizer.zero_grad()
-            
+            batch = batch.contiguous()
             if i == 0 and epoch == 0:
                 print(f"Batch shape: {batch.shape}")
-
             ## Encoding Step
             posterior = vae.encode(batch).latent_dist
             mu_posterior = posterior.mean
             logvar_posterior = posterior.logvar
-
             # Decoding step
             recon_i = vae.decode(posterior.sample()).sample
-            
             # Loss Function Computation
             kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
             kl_loss_i /= batch.size(0)
@@ -127,6 +126,7 @@ def run(args):
             except Exception as e:
                 print(f"Error saving feature extractor: {e}")
     
+    print('Training Complete')
 
 
         
@@ -134,9 +134,10 @@ if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
-    parser.add_argument("--batch_size", "-b", type=int, default=1, help="Batch size for training")
+    parser.add_argument("--batch_size", "-b", type=int, default=4, help="Batch size for training")
     # parser.add_argument("--detectors_per_batch", type=int, default=8, help="Number of detectors per batch")
-    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
+    parser.add_argument("--num_epochs", "-e", type=int, default=10, help="Number of epochs for training")
     parser.add_argument("--beta", type=float, default=0.1, help="weight MSE Loss")
+    parser.add_argument("--pooling", type=bool, default=True, help="Apply pooling to the images")
     args = parser.parse_args()
     run(args)

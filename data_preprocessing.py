@@ -27,7 +27,7 @@ def preprocess_images(img:np.ndarray, repeat_dim=False):
 
 # Define a dataset that loads your images.
 class XrdDataset(Dataset):
-    def __init__(self, data_dir, feature_extractor=None, rescale=False, apply_pooling=True):
+    def __init__(self, data_dir, feature_extractor=None, rescale=False, apply_pooling=False):
         self.zarr_pointers = load_zarr_files(get_directories(data_dir))
         self._preprocess_indeces()
         self.feature_extractor = feature_extractor
@@ -47,12 +47,15 @@ class XrdDataset(Dataset):
         img = files_to_img([self.zarr_pointers[document_id]], sample_id) 
         img = preprocess_images(img)
         img = torch.from_numpy(img).float()
+        img = einops.rearrange(img, 'b h w c -> b c h w')
+        # current image of shape [1,1, 1667, 1665], and I want it to be [1,1,1664, 1664]
         
         if self.apply_pool:
-            img = einops.rearrange(img, 'b h w c -> b c h w')
             img = self.avg_pooler(img)
             min_dim = min(img.shape[2:])
             img = img[:,:, :min_dim, :min_dim]
+        else:
+            img = img[:,:,3:, :-1]
 
         if self.feature_extractor:
             img = img.squeeze(0)
