@@ -27,7 +27,7 @@ def preprocess_images(img:np.ndarray, repeat_dim=False):
 
 # Define a dataset that loads your images.
 class XrdDataset(Dataset):
-    def __init__(self, data_dir, feature_extractor=None, rescale=False, apply_pooling=False, data_id):
+    def __init__(self, data_dir, data_id, feature_extractor=None, rescale=False, apply_pooling=False):
         self.data_id = data_id
         self.zarr_pointers = load_zarr_files(get_directories(data_dir), data_id=data_id)
         self._preprocess_indeces()

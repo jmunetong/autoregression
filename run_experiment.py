@@ -4,16 +4,12 @@ import sys
 from tqdm import tqdm
 from accelerate import Accelerator
 import wandb
-import numpy as np
-
-import matplotlib.pyplot as plt
 
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
 from torch.utils.data import DataLoader
 
-from transformers import  ViTImageProcessor
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL
 
@@ -57,6 +53,8 @@ def build_experiment_metadata(args):
         "input_shape": None,
         "latent_shape": None,
         "avg_pooling": args.avg_pooling,
+        "weight_decay": args.weight_decay,
+        "learning_rate": args.learning_rate,
     }
     return metadata
 
@@ -64,14 +62,13 @@ def build_experiment_metadata(args):
 
 def run(args):
     # TODO: ADD EXPERIMENT ID INFORMATION
-
     beta_recons = beta_recons
     experiment_dict = build_experiment_metadata(args)
     torch.cuda.empty_cache()
     # Initialize WandB
     run_logger = wandb.init(project="vae_kl_tunning", config=args)
     # feature_extractor = ViTImageProcessor.from_pretrained(FEATURE_EXTRACTOR_PATH)
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.pooling, data_id=EXPERIMENTS[data_id]) #TODO: ADD EXPERIMENT INFORMATION
+    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.pooling, data_id=EXPERIMENTS[args.data_id]) #TODO: ADD EXPERIMENT INFORMATION
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
     device = get_device()
     
@@ -81,10 +78,16 @@ def run(args):
     vae_config = vae_config_dict()
     vae = AutoencoderKL(**vae_config)
     vae.train()
-    weight_decay = 1e-3
     # Optimizer
-    optimizer = optim.AdamW(vae.parameters(), lr=1e-4, weight_decay=weight_decay)
-    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+    num_training_steps = len(dataloader) * args.num_epochs
+    num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
+    optimizer = optim.AdamW(vae.parameters(), lr=args.lr, weight_decay= args.weight_decay)
+
+    # Scheduler
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer=optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps)
     
     # Accelerator instantiation
     accelerator = Accelerator()
@@ -106,7 +109,9 @@ def run(args):
         epoch_recon_loss = 0.0
         
         for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), desc="Training"):
+            # Important before starting one forward pass
             optimizer.zero_grad()
+
             batch = batch.contiguous()
             if i == 0 and epoch == 0 and accelerator.is_main_process:
                 print(f"Batch shape: {batch.shape}")
@@ -140,9 +145,10 @@ def run(args):
             
             # Step optimizer after accumulating gradients
             optimizer.step()
+            scheduler.step()
             
         # Update epoch metrics with batch averages
-        lr_scheduler.step()
+        
         epoch_loss /= len(dataloader)
         epoch_kl_loss /=len(dataloader)
         epoch_recon_loss /= len(dataloader)
@@ -179,5 +185,7 @@ if __name__ == '__main__':
     parser.add_argument("--data_id", type=int, default=422, choices=[422, 522], help="Experiment number")
     parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
     parser.add_argument("--avg_pooling", type=bool, default=False, help="Apply average pooling to the images")
+    parser.add_argument("--learning_rate", "-lr", type=float, default=1e-4, help="learning rate training model")
+    parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     args = parser.parse_args()
     run(args)
