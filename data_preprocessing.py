@@ -1,6 +1,4 @@
 
-import os
-
 import torch
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
@@ -35,6 +33,7 @@ class XrdDataset(Dataset):
         self.rescale = rescale
         self.apply_pool = apply_pooling
         self.avg_pooler = nn.AvgPool2d(kernel_size=(2,2))
+        self.i = 0
         
     
     def __len__(self):
@@ -51,18 +50,13 @@ class XrdDataset(Dataset):
         img = torch.from_numpy(img).float()
         img = einops.rearrange(img, 'b h w c -> b c h w')
         # current image of shape [1,1, 1667, 1665], and I want it to be [1,1,1664, 1664]
-        
         if self.apply_pool:
             img = self.avg_pooler(img)
-            min_dim = min(img.shape[2:])
-            img = img[:,:, :min_dim, :min_dim]
+            if img.shape[-1] != img.shape[-2]:
+                min_dim = min(img.shape[2:])
+                img = img[:,:, :min_dim, :min_dim]
         else:
-            img = img[:,:,3:, :-1]
+            img = img[:,:,3:, :-1] if img.shape[-1] != img.shape[-2] else img
 
-        if self.feature_extractor:
-            img = img.squeeze(0)
-            img = self.feature_extractor(img, return_tensors="pt", do_rescale=False).pixel_values
-  
-        
         return img.squeeze(0)
 

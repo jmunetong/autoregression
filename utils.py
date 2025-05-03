@@ -19,8 +19,9 @@ def load_zarr_files(directory_list, data_id):
     """
     zarr_arrays = []
     for directory in directory_list:
-        print(directory)
+        
         if data_id in directory: #TODO: Fix this. This is temporary to be able to run experiments
+            print(directory)
             arr = zarr.open(directory, mode='r')
             zarr_arrays.append(arr)
     return zarr_arrays

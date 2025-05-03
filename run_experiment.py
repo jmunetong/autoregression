@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL
 
-from utils import get_device, 
+from utils import get_device
 from data_preprocessing import XrdDataset
 
 
@@ -56,21 +56,20 @@ def build_experiment_metadata(args):
         "latent_shape": None,
         "avg_pooling": args.avg_pooling,
         "weight_decay": args.weight_decay,
-        "learning_rate": args.learning_rate,
+        "learning_rate": args.lr,
     }
     return metadata
 
 
-
 def run(args):
     # TODO: ADD EXPERIMENT ID INFORMATION
-    beta_recons = beta_recons
+    beta_recons = args.beta_recons
     experiment_dict = build_experiment_metadata(args)
     torch.cuda.empty_cache()
-    # Initialize WandB
-    run_logger = wandb.init(project="vae_kl_tunning", config=args)
-    # feature_extractor = ViTImageProcessor.from_pretrained(FEATURE_EXTRACTOR_PATH)
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id]) #TODO: ADD EXPERIMENT INFORMATION
+    print(EXPERIMENTS[args.data_id])
+    
+    # Dataset and Dataloader
+    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id])
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
     device = get_device()
     
@@ -93,8 +92,8 @@ def run(args):
     
     # Accelerator instantiation
     accelerator = Accelerator()
-    vae, optimizer, dataloader, lr_scheduler = accelerator.prepare(
-    vae, optimizer, dataloader, lr_scheduler)
+    vae, optimizer, dataloader, scheduler = accelerator.prepare(
+    vae, optimizer, dataloader, scheduler)
     vae = vae.module if hasattr(vae, "module") else vae
     recons_loss = RECONS_LOSS[args.recons_loss]
 
@@ -103,13 +102,23 @@ def run(args):
     
     best_loss = float('inf')
     
+    # Loading weights and biases
+    run_logger = wandb.init(project="vae_kl_tunning", config=args)
+    
     for epoch in range(args.num_epochs):
         print(f"Epoch {epoch+1}/{args.num_epochs}")
         
         epoch_loss = 0.0
         epoch_kl_loss = 0.0
         epoch_recon_loss = 0.0
-        
+        s = None
+        for i, batch in enumerate(dataloader):
+            s = batch.shape[1:] if i ==0 else s
+            if i==0:
+                print(batch.shape)
+            assert s == batch.shape[1:], f"Batch shape mismatch: {s} != {batch.shape[1:]}"
+        sys.exit()
+
         for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), desc="Training"):
             # Important before starting one forward pass
             optimizer.zero_grad()
@@ -118,6 +127,7 @@ def run(args):
             if i == 0 and epoch == 0 and accelerator.is_main_process:
                 print(f"Batch shape: {batch.shape}")
             ## Encoding Step
+            print(f"Batch shape: {batch.shape}")
             posterior = vae.encode(batch).latent_dist
             mu_posterior = posterior.mean
             logvar_posterior = posterior.logvar
@@ -131,6 +141,7 @@ def run(args):
                 print(f"Posterior sample shape: {posterior_sample.shape}")
             
             recon_i = vae.decode(posterior_sample).sample
+            
             # Loss Function Computation
             kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
             kl_loss_i /= batch.size(0)
@@ -150,15 +161,12 @@ def run(args):
             scheduler.step()
             
         # Update epoch metrics with batch averages
-        
         epoch_loss /= len(dataloader)
         epoch_kl_loss /=len(dataloader)
         epoch_recon_loss /= len(dataloader)
         
-        
         print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
         run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
-
 
         # Saving Best model
         if epoch_loss < best_loss:
@@ -174,22 +182,21 @@ def run(args):
     print('Training Complete')
 
 
-        
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
 
+    os.makedirs("results", exist_ok=True)
     # Model Name
     parser.add_argument("--model_name", type=str, default="vae_kl", help="Name of model")
 
     # Data parameters
     parser.add_argument("--data_id", type=int, default=422, choices=[422, 522], help="Experiment number")
-    # parser.add_argument("--pooling", type=bool, default=True, help="Apply pooling to the images")
     parser.add_argument("--avg_pooling", type=bool, default=False, help="Apply average pooling to the images")
     
     # Training parameters
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
-    parser.add_argument("--learning_rate", "-lr", type=float, default=1e-4, help="learning rate training model")
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate training model")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     parser.add_argument("--beta_recons", type=float, default=0.1, help="weight MSE Loss")
     parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
