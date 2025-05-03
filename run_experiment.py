@@ -17,7 +17,6 @@ from transformers import  ViTImageProcessor
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL
 
-
 from utils import get_device
 from data_preprocessing import XrdDataset
 
