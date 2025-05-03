@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL
 
-from utils import get_device
+from utils import get_device, 
 from data_preprocessing import XrdDataset
 
 
@@ -30,6 +30,8 @@ RECONS_LOSS = {
     "mse": nn.MSELoss(reduction="mean"),
     "l1": nn.L1Loss(reduction="mean")}
 
+MODELS= {"vae_kl": AutoencoderKL}
+
 def vae_config_dict():
     vae_config = {
         "in_channels": 1,
@@ -44,11 +46,11 @@ def vae_config_dict():
 
 def build_experiment_metadata(args):
     metadata = {
+        "model_name": args.model_name,
         "data_id": args.data_id,
         "batch_size": args.batch_size,
         "num_epochs": args.num_epochs,
         "beta_recons": args.beta_recons,
-        "pooling": args.pooling,
         "recons_loss": args.recons_loss,
         "input_shape": None,
         "latent_shape": None,
@@ -68,7 +70,7 @@ def run(args):
     # Initialize WandB
     run_logger = wandb.init(project="vae_kl_tunning", config=args)
     # feature_extractor = ViTImageProcessor.from_pretrained(FEATURE_EXTRACTOR_PATH)
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.pooling, data_id=EXPERIMENTS[args.data_id]) #TODO: ADD EXPERIMENT INFORMATION
+    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id]) #TODO: ADD EXPERIMENT INFORMATION
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
     device = get_device()
     
@@ -76,7 +78,7 @@ def run(args):
     
     # Model Instantiation
     vae_config = vae_config_dict()
-    vae = AutoencoderKL(**vae_config)
+    vae = MODELS[args.model_name](**vae_config)
     vae.train()
     # Optimizer
     num_training_steps = len(dataloader) * args.num_epochs
@@ -176,16 +178,25 @@ def run(args):
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
-    parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
-    parser.add_argument("--batch_size", "-b", type=int, default=4, help="Batch size for training")
-    # parser.add_argument("--detectors_per_batch", type=int, default=8, help="Number of detectors per batch")
-    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
-    parser.add_argument("--beta_recons", type=float, default=0.1, help="weight MSE Loss")
-    parser.add_argument("--pooling", type=bool, default=True, help="Apply pooling to the images")
+
+    # Model Name
+    parser.add_argument("--model_name", type=str, default="vae_kl", help="Name of model")
+
+    # Data parameters
     parser.add_argument("--data_id", type=int, default=422, choices=[422, 522], help="Experiment number")
-    parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
+    # parser.add_argument("--pooling", type=bool, default=True, help="Apply pooling to the images")
     parser.add_argument("--avg_pooling", type=bool, default=False, help="Apply average pooling to the images")
+    
+    # Training parameters
+    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
     parser.add_argument("--learning_rate", "-lr", type=float, default=1e-4, help="learning rate training model")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
+    parser.add_argument("--beta_recons", type=float, default=0.1, help="weight MSE Loss")
+    parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
+
+    # Pipeline parameters
+    parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
+    parser.add_argument("--batch_size", "-b", type=int, default=4, help="Batch size for training")
+ 
     args = parser.parse_args()
     run(args)

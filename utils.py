@@ -1,6 +1,9 @@
+import time
+import uuid
+import os
+
 import zarr
 import numpy as np
-import os
 import torch
 
 
@@ -89,3 +92,9 @@ def get_device():
         device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
             
     return device
+
+
+def create_experiment_id(model_name="transformer", notes="default"):
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    unique_id = uuid.uuid4().hex[:8]  # short unique hash
+    return f"{timestamp}_{model_name}_{notes}_{unique_id}"
