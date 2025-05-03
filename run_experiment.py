@@ -5,14 +5,18 @@ from tqdm import tqdm
 from accelerate import Accelerator
 import wandb
 import numpy as np
+
 import matplotlib.pyplot as plt
+
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
-import einops
-from transformers import  ViTImageProcessor
-from diffusers import AutoencoderKL
 from torch.utils.data import DataLoader
+
+from transformers import  ViTImageProcessor
+from transformers import get_cosine_schedule_with_warmup
+from diffusers import AutoencoderKL
+
 
 from utils import get_device
 from data_preprocessing import XrdDataset
@@ -45,10 +49,10 @@ def vae_config_dict():
 
 def build_experiment_metadata(args):
     metadata = {
-        "experiment": args.experiment,
+        "data_id": args.data_id,
         "batch_size": args.batch_size,
         "num_epochs": args.num_epochs,
-        "beta": args.beta,
+        "beta_recons": args.beta_recons,
         "pooling": args.pooling,
         "recons_loss": args.recons_loss,
         "input_shape": None,
@@ -60,13 +64,15 @@ def build_experiment_metadata(args):
 
 
 def run(args):
-    beta = args.beta
+    # TODO: ADD EXPERIMENT ID INFORMATION
+
+    beta_recons = beta_recons
     experiment_dict = build_experiment_metadata(args)
     torch.cuda.empty_cache()
     # Initialize WandB
     run_logger = wandb.init(project="vae_kl_tunning", config=args)
     # feature_extractor = ViTImageProcessor.from_pretrained(FEATURE_EXTRACTOR_PATH)
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.pooling)
+    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.pooling, data_id=EXPERIMENTS[data_id]) #TODO: ADD EXPERIMENT INFORMATION
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
     device = get_device()
     
@@ -78,7 +84,6 @@ def run(args):
     vae.train()
     weight_decay = 1e-3
     # Optimizer
-    # optimizer = optim.Adam(vae.parameters(), lr=1e-4)
     optimizer = optim.AdamW(vae.parameters(), lr=1e-4, weight_decay=weight_decay)
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     
@@ -124,7 +129,7 @@ def run(args):
             kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
             kl_loss_i /= batch.size(0)
             recon_loss_i = recons_loss(recon_i, batch)
-            loss_i = beta * recon_loss_i + kl_loss_i
+            loss_i = beta_recons * recon_loss_i + kl_loss_i
             
             accelerator.backward(loss_i)
             
@@ -170,9 +175,9 @@ if __name__ == '__main__':
     parser.add_argument("--batch_size", "-b", type=int, default=4, help="Batch size for training")
     # parser.add_argument("--detectors_per_batch", type=int, default=8, help="Number of detectors per batch")
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
-    parser.add_argument("--beta", type=float, default=0.1, help="weight MSE Loss")
+    parser.add_argument("--beta_recons", type=float, default=0.1, help="weight MSE Loss")
     parser.add_argument("--pooling", type=bool, default=True, help="Apply pooling to the images")
-    parser.add_argument("--experiment", type=int, default=422, choices=[422, 522], help="Experiment number")
+    parser.add_argument("--data_id", type=int, default=422, choices=[422, 522], help="Experiment number")
     parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
     parser.add_argument("--avg_pooling", type=bool, default=False, help="Apply average pooling to the images")
     args = parser.parse_args()

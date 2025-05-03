@@ -4,7 +4,7 @@ import os
 import torch
 
 
-def load_zarr_files(directory_list):
+def load_zarr_files(directory_list, data_id):
     """
     Load Zarr files from a list of directories.
 
@@ -17,7 +17,7 @@ def load_zarr_files(directory_list):
     zarr_arrays = []
     for directory in directory_list:
         print(directory)
-        if 'mfxl1027522' in directory: #TODO: Fix this. This is temporary to be able to run experiments
+        if data_id in directory: #TODO: Fix this. This is temporary to be able to run experiments
             arr = zarr.open(directory, mode='r')
             zarr_arrays.append(arr)
     return zarr_arrays
