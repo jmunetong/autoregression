@@ -14,7 +14,7 @@ from diffusers import AutoencoderKL, VQModel
 from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
 from losses import IntensityWeightedMSELoss
-from trainers import TrainerVAE
+from trainers import TrainerVAE, TrainerVQ
 
 
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
@@ -96,9 +96,9 @@ def init_configure_model(args):
         dict: A dictionary containing the model configuration.
     """
     if args.model_name == "vae_kl":
-        return vae_config_dict(args)
+        return vae_config_dict(args), TrainerVAE
     elif args.model_name == "vq":
-        return vq_config_dict(args)
+        return vq_config_dict(args), TrainerVQ
     else:
         raise ValueError(f"Unknown model name: {args.model_name}")
 
@@ -117,7 +117,7 @@ def run(args):
     print(f'Current CUDA device is:{device}')
     
     # Model Instantiation
-    model_config = init_configure_model(args)
+    model_config, trainer = init_configure_model(args)
     model = MODELS[args.model_name](**model_config)
     model.train()
     # Optimizer
@@ -143,8 +143,8 @@ def run(args):
     
     # Loading weights and biases
     run_logger = wandb.init(project=args.model_name, id=model_id, config=args)
-    trainer = TrainerVAE(args, model, optimizer, scheduler, accelerator, run_logger, recons_loss)
-    trainer.run_train(dataloader, experiment_dict, directory)
+    train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, run_logger, recons_loss)
+    train_pipeline.run_train(dataloader, experiment_dict, directory)
     print_color('Training Complete',"green")
     print_color(f"Model information stored in: {directory}", "yellow")
 
@@ -155,7 +155,7 @@ if __name__ == '__main__':
 
     os.makedirs("results", exist_ok=True)
     # Model Name
-    parser.add_argument("--model_name", type=str, default="vae_kl", help="Name of model")
+    parser.add_argument("--model_name", "-m", type=str, default="vae_kl", help="Name of model")
     parser.add_argument("--latent_channels", type=int, default=2, help="Number of latent channels")
 
     # Data parameters

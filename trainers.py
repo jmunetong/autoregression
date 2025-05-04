@@ -44,16 +44,19 @@ class TrainerVQ(BaseTrainer):
                     print(f"Batch shape: {batch.shape}")
             
                 ## Encoding Step
-                outputs = self.model(batch, return_dict=True)
-                loss_i = outputs.loss  # This includes perceptual + commitment + reconstruction loss
-                recons = outputs.reconstructions
-               
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
-                    latents = outputs.latents
+                    latents = self.model.encode(batch, return_dict=True).latents
                     experiment_dict["input_shape"] = list(batch.shape[1:])
                     experiment_dict["latent_shape"] = list(latents.shape[1:])
                     print(f"Batch shape: {batch.shape}")
                     print(f"Posterior sample shape: {latents.shape}")
+                    out = self.model.decode(latents, return_dict=True)
+                    loss_i  = out.commit_loss
+                    recons = out.sample
+                else:
+                    out = self.model(batch, return_dict=True)
+                    loss_i  = out.commit_loss
+                    recons = out.sample
                 
                 self.accelerator.backward(loss_i)
                 
