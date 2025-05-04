@@ -9,7 +9,7 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 
 from transformers import get_cosine_schedule_with_warmup
-from diffusers import AutoencoderKL
+from diffusers import AutoencoderKL, VQModel
 
 from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
@@ -31,31 +31,39 @@ RECONS_LOSS = {
     "l1": nn.L1Loss(reduction="mean"),
     "iwmse": IntensityWeightedMSELoss(alpha=2.0),}
 
-MODELS= {"vae_kl": AutoencoderKL}
+MODELS= {"vae_kl": AutoencoderKL,
+        "vq": VQModel}
 
 def vae_config_dict(args):
-    vae_config = {
+    config = {
         "in_channels": 1,
         "out_channels": 1,
         "latent_channels": args.latent_channels,
         "down_block_types": ("DownEncoderBlock2D",) * 4,
         "up_block_types": ("UpDecoderBlock2D",) * 4,
         "block_out_channels": (64, 128, 256, 512),
-        "sample_size": 64
+        "sample_size": 64,
+        "mid_block_add_attention": True
     }
-    return vae_config
+    return config
 
 def vq_config_dict(args):
-    vq_config = {
+    config = {
         "in_channels": 1,
         "out_channels": 1,
         "latent_channels": args.latent_channels,
         "down_block_types": ("DownEncoderBlock2D",) * 4,
         "up_block_types": ("UpDecoderBlock2D",) * 4,
         "block_out_channels": (64, 128, 256, 512),
-        "sample_size": 64
-    }
-    return vq_config
+        "sample_size": 64,
+        "layers_per_block": 1,
+        "act_fn": "silu",
+        "sample_size": 32,
+        "num_vq_embeddings": 256,
+        "norm_num_groups": 32,
+    }   
+    return config
+
 
 def build_experiment_metadata(args):
     metadata = {
@@ -77,6 +85,23 @@ def build_experiment_metadata(args):
         metadata['alpha_mse'] = args.alpha_mse  
     return metadata
 
+def init_configure_model(args):
+    """
+    Initialize the model configuration based on the provided arguments.
+    
+    Args:
+        args (argparse.Namespace): Command line arguments containing model parameters.
+    
+    Returns:
+        dict: A dictionary containing the model configuration.
+    """
+    if args.model_name == "vae_kl":
+        return vae_config_dict(args)
+    elif args.model_name == "vq":
+        return vq_config_dict(args)
+    else:
+        raise ValueError(f"Unknown model name: {args.model_name}")
+
 
 def run(args):
     model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
@@ -92,7 +117,7 @@ def run(args):
     print(f'Current CUDA device is:{device}')
     
     # Model Instantiation
-    model_config = vae_config_dict(args)
+    model_config = init_configure_model(args)
     model = MODELS[args.model_name](**model_config)
     model.train()
     # Optimizer
