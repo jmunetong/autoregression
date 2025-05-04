@@ -63,6 +63,7 @@ def build_experiment_metadata(args):
 
 def run(args):
     # TODO: ADD EXPERIMENT ID INFORMATION
+    model_id, directory = 
     beta_recons = args.beta_recons
     experiment_dict = build_experiment_metadata(args)
     torch.cuda.empty_cache()

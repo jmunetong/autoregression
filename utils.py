@@ -94,8 +94,15 @@ def get_device():
             
     return device
 
-
-def create_experiment_id(model_name="transformer", notes="default"):
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
+def create_experiment_id(model_name="vae", data_id=522):
+    timestamp = time.strftime("%y%m%d-%H%M")
     unique_id = uuid.uuid4().hex[:8]  # short unique hash
-    return f"{timestamp}_{model_name}_{notes}_{unique_id}"
+    return f"{timestamp}_{model_name}_d{data_id}"
+
+
+def create_directory(model_name, data_id):
+    experiment_id = create_experiment_id(model_name, data_id)
+    directory = os.path.join("experiments", model_name, experiment_id)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    return experiment_id, directory
