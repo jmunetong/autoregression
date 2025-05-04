@@ -45,6 +45,18 @@ def vae_config_dict(args):
     }
     return vae_config
 
+def vq_config_dict(args):
+    vq_config = {
+        "in_channels": 1,
+        "out_channels": 1,
+        "latent_channels": args.latent_channels,
+        "down_block_types": ("DownEncoderBlock2D",) * 4,
+        "up_block_types": ("UpDecoderBlock2D",) * 4,
+        "block_out_channels": (64, 128, 256, 512),
+        "sample_size": 64
+    }
+    return vq_config
+
 def build_experiment_metadata(args):
     metadata = {
         "model_name": args.model_name,
