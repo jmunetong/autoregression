@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL
 
-from utils import get_device
+from utils import get_device, create_directory
 from data_preprocessing import XrdDataset
 
 
@@ -63,7 +63,7 @@ def build_experiment_metadata(args):
 
 def run(args):
     # TODO: ADD EXPERIMENT ID INFORMATION
-    model_id, directory = 
+    model_id, directory = create_directory(args.model_name, args.data_id)
     beta_recons = args.beta_recons
     experiment_dict = build_experiment_metadata(args)
     torch.cuda.empty_cache()
@@ -174,9 +174,9 @@ def run(args):
             best_loss = epoch_loss
             print(f"New best loss: {best_loss}")
             # Save the model
-            torch.save(vae.state_dict(), "vae_model.pth")
+            torch.save(vae.state_dict(), os.path.join(directory,"vae_model.pth"))
             try:
-                vae.save_pretrained("vae_model")
+                vae.save_pretrained(os.path.join(directory,"vae_model_pretrained"))
             except Exception as e:
                 print(f"Error saving feature extractor: {e}")
     
