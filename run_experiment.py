@@ -129,8 +129,8 @@ if __name__ == '__main__':
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate training model")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
-    parser.add_argument("--beta_recons", type=float, default=0.1, help="weight MSE Loss")
-    parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
+    parser.add_argument("--beta_recons", type=float, default=1, help="weight MSE Loss")
+    parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
     parser.add_argument("--alpha_mse", type=float, default=0.2, help="Alpha for Intensity Weighted MSE Loss")
 
     # Pipeline parameters
