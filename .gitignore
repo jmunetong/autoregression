@@ -184,3 +184,4 @@ peaknet10k/
 /peaknet10k
 vae_model/
 *.zip
+experiments/*

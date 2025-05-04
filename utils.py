@@ -21,7 +21,7 @@ def load_zarr_files(directory_list, data_id):
     for directory in directory_list:
         
         if data_id in directory: #TODO: Fix this. This is temporary to be able to run experiments
-            print(directory)
+            # print(directory)
             arr = zarr.open(directory, mode='r')
             zarr_arrays.append(arr)
     return zarr_arrays
@@ -97,7 +97,7 @@ def get_device():
 def create_experiment_id(model_name="vae", data_id=522):
     timestamp = time.strftime("%y%m%d-%H%M")
     unique_id = uuid.uuid4().hex[:8]  # short unique hash
-    return f"{timestamp}_{model_name}_d{data_id}"
+    return f"{timestamp}_{model_name}_d{data_id}_{unique_id}"
 
 
 def create_directory(model_name, data_id):
@@ -106,3 +106,19 @@ def create_directory(model_name, data_id):
     if not os.path.exists(directory):
         os.makedirs(directory)
     return experiment_id, directory
+
+def print_color(text, color="default"):
+    colors = {
+        "default": "\033[0m",
+        "red":     "\033[91m",
+        "green":   "\033[92m",
+        "yellow":  "\033[93m",
+        "blue":    "\033[94m",
+        "magenta": "\033[95m",
+        "cyan":    "\033[96m",
+        "white":   "\033[97m"
+    }
+
+    reset = "\033[0m"
+    color_code = colors.get(color.lower(), colors["default"])
+    print(f"{color_code}{text}{reset}")

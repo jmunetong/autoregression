@@ -1,0 +1,92 @@
+import os
+import yaml
+
+import torch
+from tqdm import tqdm
+
+TEST_LEGNTH = 3
+
+
+class TrainerVAE():
+    def __init__(self, args, model, optimizer, scheduler, accelerator, run_logger, recons_loss):
+        self.args = args
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.accelerator = accelerator
+        self.run_logger = run_logger
+        self.recons_loss = recons_loss
+       
+    def run_train(self, data_loader, experiment_dict, directory):
+        best_loss = float('inf')
+        beta_recons = self.args.beta_recons
+
+        for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
+            print(f"Epoch {epoch+1}/{self.args.num_epochs}")    
+            epoch_loss = 0.0
+            epoch_kl_loss = 0.0
+            epoch_recon_loss = 0.0
+
+            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):
+                # Important before starting one forward pass
+                self.optimizer.zero_grad()
+                batch = batch.contiguous()
+                if self.args.test_pipeline and i > TEST_LEGNTH:
+                    break
+                if i == 0 and epoch == 0 and self.accelerator.is_main_process:
+                    print(f"Batch shape: {batch.shape}")
+            
+                ## Encoding Step
+                posterior = self.model.encode(batch).latent_dist
+                mu_posterior = posterior.mean
+                logvar_posterior = posterior.logvar
+                
+                # Decoding step
+                posterior_sample = posterior.sample()
+                if i == 0 and epoch == 0 and self.accelerator.is_main_process:
+                    experiment_dict["input_shape"] = list(batch.shape[1:])
+                    experiment_dict["latent_shape"] = list(posterior_sample.shape[1:])
+                    print(f"Batch shape: {batch.shape}")
+                    print(f"Posterior sample shape: {posterior_sample.shape}")
+                
+                recon_i = self.model.decode(posterior_sample).sample
+                
+                # Loss Function Computation
+                kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
+                kl_loss_i /= batch.size(0)
+                recon_loss_i = self.recons_loss(recon_i, batch)
+                loss_i = beta_recons * recon_loss_i + kl_loss_i
+                
+                self.accelerator.backward(loss_i)
+                
+                # Track metrics
+                epoch_loss += loss_i.item()
+                epoch_kl_loss += kl_loss_i.item()
+                epoch_recon_loss += recon_loss_i.item()
+                tqdm.write(f"Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                
+                # Step optimizer after accumulating gradients
+                self.optimizer.step()
+                self.scheduler.step()
+                
+            # Update epoch metrics with batch averages
+            epoch_loss /= len(data_loader)
+            epoch_kl_loss /= len(data_loader)
+            epoch_recon_loss /= len(data_loader)
+            
+            print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+            self.run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
+
+            # Saving Best model
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                print(f"New best loss: {best_loss}")
+                # Save the model
+                torch.save(self.model.state_dict(), os.path.join(directory, f"vae_model.pth"))
+                try:
+                    self.model.save_pretrained(os.path.join(directory, f"vae_model_pretrained"))
+                except Exception as e:
+                    print(f"Error saving feature extractor: {e}")
+
+        with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
+            yaml.dump(experiment_dict, f, default_flow_style=False)
