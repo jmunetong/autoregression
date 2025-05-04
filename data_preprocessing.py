@@ -23,6 +23,15 @@ def preprocess_images(img:np.ndarray, repeat_dim=False):
     return img
 
 
+class IntensityWeightedMSELoss(nn.Module):
+    def __init__(self, alpha=2.0):
+        super(IntensityWeightedMSELoss, self).__init__()
+        self.alpha = alpha
+
+    def forward(self, input, target):
+        weights = 1 + self.alpha * target
+        return ((input - target)**2 * weights).mean()
+
 # Define a dataset that loads your images.
 class XrdDataset(Dataset):
     def __init__(self, data_dir, data_id, feature_extractor=None, rescale=False, apply_pooling=False):
@@ -35,7 +44,6 @@ class XrdDataset(Dataset):
         self.avg_pooler = nn.AvgPool2d(kernel_size=(2,2))
         self.i = 0
         
-    
     def __len__(self):
         return len(self.idx_files)
     
