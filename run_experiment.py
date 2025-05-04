@@ -15,7 +15,9 @@ from diffusers import AutoencoderKL
 
 from utils import get_device, create_directory
 from data_preprocessing import XrdDataset
+from losses import IntensityWeightedMSELoss
 
+TEST_LENGTH = 5
 
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
 DATA_PATH = "data"
@@ -28,7 +30,8 @@ EXPERIMENTS = {
 
 RECONS_LOSS = {
     "mse": nn.MSELoss(reduction="mean"),
-    "l1": nn.L1Loss(reduction="mean")}
+    "l1": nn.L1Loss(reduction="mean"),
+    "iwmse": IntensityWeightedMSELoss(alpha=2.0),}
 
 MODELS= {"vae_kl": AutoencoderKL}
 
@@ -57,7 +60,10 @@ def build_experiment_metadata(args):
         "avg_pooling": args.avg_pooling,
         "weight_decay": args.weight_decay,
         "learning_rate": args.lr,
+
     }
+    if args.recons_loss == 'iwmse':
+        metadata['alpha_mse'] = args.alpha_mse  
     return metadata
 
 
@@ -68,6 +74,7 @@ def run(args):
     experiment_dict = build_experiment_metadata(args)
     torch.cuda.empty_cache()
     print(EXPERIMENTS[args.data_id])
+
     
     # Dataset and Dataloader
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id])
@@ -104,9 +111,9 @@ def run(args):
     best_loss = float('inf')
     
     # Loading weights and biases
-    run_logger = wandb.init(project="vae_kl_tunning", config=args)
+    run_logger = wandb.init(project=args.model_name, id=model_id, config=args)
     
-    for epoch in range(args.num_epochs):
+    for epoch in range(args.num_epochs if not args.test_pipeline else TEST_LENGTH):
         print(f"Epoch {epoch+1}/{args.num_epochs}")
         
         epoch_loss = 0.0
@@ -120,15 +127,14 @@ def run(args):
             assert s == batch.shape[1:], f"Batch shape mismatch: {s} != {batch.shape[1:]}"
         sys.exit()
 
-        for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), desc="Training"):
+        for i, batch in tqdm(enumerate(dataloader), total=len(dataloader) if not args.test_pipeline else TEST_LENGTH, desc="Training"):
             # Important before starting one forward pass
             optimizer.zero_grad()
-
             batch = batch.contiguous()
             if i == 0 and epoch == 0 and accelerator.is_main_process:
                 print(f"Batch shape: {batch.shape}")
+        
             ## Encoding Step
-            print(f"Batch shape: {batch.shape}")
             posterior = vae.encode(batch).latent_dist
             mu_posterior = posterior.mean
             logvar_posterior = posterior.logvar
@@ -201,10 +207,16 @@ if __name__ == '__main__':
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     parser.add_argument("--beta_recons", type=float, default=0.1, help="weight MSE Loss")
     parser.add_argument("-recons_loss", type=str, default="mse", choices=["mse", "l1"], help="Reconstruction loss type")
+    parser.add_argument("--alpha_mse", type=float, default=0.2, help="Alpha for Intensity Weighted MSE Loss")
 
     # Pipeline parameters
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
     parser.add_argument("--batch_size", "-b", type=int, default=4, help="Batch size for training")
+    parser.add_argument(
+        "--test_pipeline", "-t",
+        action="store_true",
+        help="Enable test pipeline (default: False)"
+    )
  
     args = parser.parse_args()
     run(args)
