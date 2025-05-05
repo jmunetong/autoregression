@@ -6,13 +6,12 @@ from tqdm import tqdm
 TEST_LEGNTH = 3
 
 class BaseTrainer():
-    def __init__(self, args, model, optimizer, scheduler, accelerator, run_logger, recons_loss):
+    def __init__(self, args, model, optimizer, scheduler, accelerator,  recons_loss):
         self.args = args
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.accelerator = accelerator
-        self.run_logger = run_logger
         self.recons_loss = recons_loss
 
     def run_trainer(self, data_loader, experiment_dict, directory):
@@ -23,22 +22,24 @@ class BaseTrainer():
 
     def save_model(self, directory):
         # Save the model
-        torch.save(self.model.state_dict(), os.path.join(directory, f"vq_model.pth"))
-        try:
-            self.model.save_pretrained(os.path.join(directory, f"vq_model_pretrained"))
-        except Exception as e:
-            print(f"Error saving feature extractor: {e}")
+        # torch.save(self.model.state_dict(), os.path.join(directory, f"vq_model.pth"))
+        # try:
+        #     self.model.save_pretrained(os.path.join(directory, f"vq_model_pretrained"))
+        # except Exception as e:
+        #     print(f"Error saving feature extractor: {e}")
+        self.accelerator.save_model(self.model, directory)
 
 
 
 class TrainerVQ(BaseTrainer):
-    def __init__(self, args, model, optimizer, scheduler, accelerator, run_logger, recons_loss):
-        super().__init__(args, model, optimizer, scheduler, accelerator, run_logger, recons_loss)
+    def __init__(self, args, model, optimizer, scheduler, accelerator, recons_loss):
+        super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss)
     
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
         for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
-            print(f"Epoch {epoch+1}/{self.args.num_epochs}")    
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}/{self.args.num_epochs}")    
             epoch_loss = 0.0
             epoch_recon_loss = 0.0
 
@@ -86,7 +87,7 @@ class TrainerVQ(BaseTrainer):
             epoch_recon_loss /= len(data_loader)
             
             print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-            self.run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss})
+            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss})
 
             # Saving Best model
             if epoch_loss < best_loss:
@@ -96,8 +97,8 @@ class TrainerVQ(BaseTrainer):
 
 
 class TrainerVAE(BaseTrainer):
-    def __init__(self, args, model, optimizer, scheduler, accelerator, run_logger, recons_loss):
-        super().__init__(args, model, optimizer, scheduler, accelerator, run_logger, recons_loss)
+    def __init__(self, args, model, optimizer, scheduler, accelerator, recons_loss):
+        super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss)
        
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
@@ -158,11 +159,12 @@ class TrainerVAE(BaseTrainer):
             epoch_recon_loss /= len(data_loader)
             
             print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-            self.run_logger.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
+            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
 
             # Saving Best model
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
-                print(f"New best loss: {best_loss}")
+                if self.accelerator.is_main_process:
+                    print(f"New best loss: {best_loss}")
                 self.save_model(directory)
 

@@ -2,6 +2,8 @@ import os
 
 from accelerate import Accelerator
 import wandb
+import torch.distributed as dist
+import json
 import yaml
 import torch
 import torch.nn.functional as F
@@ -102,13 +104,94 @@ def init_configure_model(args):
     else:
         raise ValueError(f"Unknown model name: {args.model_name}")
 
+# @accelerator.on_main_process
+# def prepare_directory(args):
+#     model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
+#     model_id, directory = create_directory(model_name_dir, args.data_id)
+#     experiment_dict = build_experiment_metadata(args)
+#     torch.cuda.empty_cache()
+#     return model_id, experiment_dict, directory
+
+
+
+def broadcast_from_main(value, max_len=1024):
+    # Only the main process creates the value
+    if accelerator.is_main_process:
+        raw = json.dumps(value).encode('utf-8')
+        tensor = torch.ByteTensor(list(raw))
+        padded = torch.nn.functional.pad(tensor, (0, max_len - tensor.size(0)))
+    else:
+        padded = torch.ByteTensor(max_len)
+
+    # Broadcast from rank 0 to all others
+    if dist.is_initialized():
+        dist.broadcast(padded, src=0)
+
+    # Decode on all ranks
+    raw_str = bytes(padded.tolist()).decode('utf-8').rstrip('\x00')
+    return json.loads(raw_str)
 
 def run(args):
+    accelerator = Accelerator(log_with="wandb")
+    # Create a shared variable to store the values
     model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-    model_id, directory = create_directory(model_name_dir, args.data_id)
-    experiment_dict = build_experiment_metadata(args)
+    # Create a shared variable to store the values
+    # Create a shared variable to store the values
+    model_id = None
+    directory = None
+    experiment_dict = None
+
+    model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
     torch.cuda.empty_cache()
 
+    # Step 1: Main process creates directory and metadata
+    if accelerator.is_main_process:
+        model_id, directory = create_directory(model_name_dir, args.data_id)
+        experiment_dict = build_experiment_metadata(args)
+        
+        # Convert directory to string if it's a Path object
+        directory_str = str(directory) if hasattr(directory, "__fspath__") else directory
+        
+        # Store the path in a temporary file that all processes can access
+        # Use a location that all processes can definitely access
+        import os
+        import json
+        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
+        with open(temp_path, "w") as f:
+            f.write(directory_str)
+        
+        # Store the metadata in the actual directory
+        with open(f"{directory}/metadata.json", "w") as f:
+            json.dump({
+                "model_id": model_id,
+                "directory": directory_str,
+                "experiment_dict": experiment_dict
+            }, f)
+
+    # Step 2: Wait for file to be written
+    accelerator.wait_for_everyone()
+
+    # Step 3: All non-main processes read the directory path and load values
+    if not accelerator.is_main_process:
+        import os
+        import json
+        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
+        with open(temp_path, "r") as f:
+            directory = f.read().strip()
+        
+        with open(f"{directory}/metadata.json", "r") as f:
+            data = json.load(f)
+            model_id = data["model_id"]
+            experiment_dict = data["experiment_dict"]
+
+    # Clean up the temporary file
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        import os
+        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        
     # Dataset and Dataloader
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id])
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
@@ -132,24 +215,40 @@ def run(args):
         num_training_steps=num_training_steps)
     
     # Accelerator instantiation
-    accelerator = Accelerator()
+   
     model, optimizer, dataloader, scheduler = accelerator.prepare(
     model, optimizer, dataloader, scheduler)
     model = model.module if hasattr(model, "module") else model
     recons_loss = RECONS_LOSS[args.recons_loss]
 
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f'Total parameters: {total_params:,}')
-    
+    if accelerator.is_main_process:
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f'Total parameters: {total_params:,}')
+        
     # Loading weights and biases
-    run_logger = wandb.init(project=args.model_name, id=model_id, config=args)
-    train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, run_logger, recons_loss)
+    # if accelerator.is_main_process:
+    #     run_logger = wandb.init(project=args.model_name, id=model_id, config=args)
+    args_dict = vars(args)
+    args_dict['model_id'] = model_id
+    accelerator.init_trackers(
+        args.model_name,
+        config=args_dict
+    )
+    
+    train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
     train_pipeline.run_train(dataloader, experiment_dict, directory)
+    
+    if accelerator.is_main_process:
+        with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
+            yaml.dump(experiment_dict, f, default_flow_style=False)
+        
+        with open(os.path.join(directory, "config.json"), "w") as file:
+            json.dump(model_config, file)
 
-    with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
-        yaml.dump(experiment_dict, f, default_flow_style=False)
-    print_color('Training Complete',"green")
-    print_color(f"Model information stored in: {directory}", "yellow")
+        print_color('Training Complete',"green")
+        print_color(f"Model information stored in: {directory}", "yellow")
+        accelerator.end_training()
+    
 
 
 if __name__ == '__main__':
@@ -183,4 +282,7 @@ if __name__ == '__main__':
     )
  
     args = parser.parse_args()
+    # model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
+    # model_id, directory = create_directory(model_name_dir, args.data_id)
+    # experiment_dict = build_experiment_metadata(args)
     run(args)
