@@ -2,7 +2,7 @@ import os
 
 from accelerate import Accelerator
 import wandb
-
+import yaml
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
@@ -145,6 +145,9 @@ def run(args):
     run_logger = wandb.init(project=args.model_name, id=model_id, config=args)
     train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, run_logger, recons_loss)
     train_pipeline.run_train(dataloader, experiment_dict, directory)
+
+    with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
+        yaml.dump(experiment_dict, f, default_flow_style=False)
     print_color('Training Complete',"green")
     print_color(f"Model information stored in: {directory}", "yellow")
 

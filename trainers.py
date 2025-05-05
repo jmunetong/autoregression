@@ -1,5 +1,4 @@
 import os
-import yaml
 
 import torch
 from tqdm import tqdm
@@ -21,6 +20,15 @@ class BaseTrainer():
         Run the training loop for the model.
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
+
+    def save_model(self, directory):
+        # Save the model
+        torch.save(self.model.state_dict(), os.path.join(directory, f"vq_model.pth"))
+        try:
+            self.model.save_pretrained(os.path.join(directory, f"vq_model_pretrained"))
+        except Exception as e:
+            print(f"Error saving feature extractor: {e}")
+
 
 
 class TrainerVQ(BaseTrainer):
@@ -84,15 +92,7 @@ class TrainerVQ(BaseTrainer):
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
                 print(f"New best loss: {best_loss}")
-                # Save the model
-                torch.save(self.model.state_dict(), os.path.join(directory, f"vq_model.pth"))
-                try:
-                    self.model.save_pretrained(os.path.join(directory, f"vq_model_pretrained"))
-                except Exception as e:
-                    print(f"Error saving feature extractor: {e}")
-
-        with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
-            yaml.dump(experiment_dict, f, default_flow_style=False)
+                self.save_model(directory)
 
 
 class TrainerVAE(BaseTrainer):
@@ -141,15 +141,16 @@ class TrainerVAE(BaseTrainer):
                 
                 self.accelerator.backward(loss_i)
                 
+                # Step optimizer after accumulating gradients
+                self.optimizer.step()
+                self.scheduler.step()
+
                 # Track metrics
                 epoch_loss += loss_i.item()
                 epoch_kl_loss += kl_loss_i.item()
                 epoch_recon_loss += recon_loss_i.item()
                 tqdm.write(f"Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
                 
-                # Step optimizer after accumulating gradients
-                self.optimizer.step()
-                self.scheduler.step()
                 
             # Update epoch metrics with batch averages
             epoch_loss /= len(data_loader)
@@ -163,12 +164,5 @@ class TrainerVAE(BaseTrainer):
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
                 print(f"New best loss: {best_loss}")
-                # Save the model
-                torch.save(self.model.state_dict(), os.path.join(directory, f"vae_model.pth"))
-                try:
-                    self.model.save_pretrained(os.path.join(directory, f"vae_model_pretrained"))
-                except Exception as e:
-                    print(f"Error saving feature extractor: {e}")
+                self.save_model(directory)
 
-        with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
-            yaml.dump(experiment_dict, f, default_flow_style=False)
