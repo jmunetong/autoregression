@@ -16,7 +16,7 @@ def run():
     print(f"Number of images: {len(dataset)}")
     index = [np.random.randint(0, len(dataset)) for _ in range(5)]
     for j, i in enumerate(index):
-        plot_reconstruction(dataset[i], dataset[i], idx=i)
+        plot_reconstruction(dataset[i], dataset[i], idx=i, directory='./')
         # img = dataset[i]
         # print(f"Image {i} shape: {img.shape}")
         # print(f"Image {i} mean: {img.mean()}")

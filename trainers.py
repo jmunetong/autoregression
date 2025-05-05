@@ -58,29 +58,31 @@ class TrainerVQ(BaseTrainer):
                     experiment_dict["input_shape"] = list(batch.shape[1:])
                     experiment_dict["latent_shape"] = list(latents.shape[1:])
                     print(f"Batch shape: {batch.shape}")
-                    print(f"Posterior sample shape: {latents.shape}")
+                    print(f"Latent sample shape: {latents.shape}")
                     out = self.model.decode(latents, return_dict=True)
-                    loss_i  = out.commit_loss
-                    recons = out.sample
+
                 else:
                     out = self.model(batch, return_dict=True)
-                    loss_i  = out.commit_loss
-                    recons = out.sample
-                
-                self.accelerator.backward(loss_i)
-                
+                loss_i  = out.commit_loss
+                recons = out.sample
                 # Loss Function Computation
                 recon_loss_i = self.recons_loss(recons, batch)
+                loss_i = recon_loss_i + loss_i
+                self.accelerator.backward(loss_i)
+                self.optimizer.step()
+                self.scheduler.step()
+                
+                
     
                 # Track metrics
                 epoch_loss += loss_i.item()
 
                 epoch_recon_loss += recon_loss_i.item()
-                tqdm.write(f"Epoch {epoch} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                del recon_loss_i, recons
                 
                 # Step optimizer after accumulating gradients
-                self.optimizer.step()
-                self.scheduler.step()
+                
                 
             # Update epoch metrics with batch averages
             epoch_loss /= len(data_loader)
@@ -139,19 +141,20 @@ class TrainerVAE(BaseTrainer):
                 kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
                 kl_loss_i /= batch.size(0)
                 recon_loss_i = self.recons_loss(recon_i, batch)
-                loss_i = beta_recons * recon_loss_i + kl_loss_i
+                loss_i = beta_recons * recon_loss_i + kl_loss_i #TODO TEST THIS PARAMETER
                 
                 self.accelerator.backward(loss_i)
                 
                 # Step optimizer after accumulating gradients
                 self.optimizer.step()
                 self.scheduler.step()
+                del recon_i, posterior_sample, mu_posterior, logvar_posterior
 
                 # Track metrics
                 epoch_loss += loss_i.item()
                 epoch_kl_loss += kl_loss_i.item()
                 epoch_recon_loss += recon_loss_i.item()
-                tqdm.write(f"Epoch {epoch} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                tqdm.write(f"Epoch {epoch + 1} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
                 
                 
             # Update epoch metrics with batch averages

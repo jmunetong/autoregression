@@ -19,7 +19,7 @@ from losses import IntensityWeightedMSELoss
 from trainers import TrainerVAE, TrainerVQ
 from plot import plot_reconstruction
 
-
+accelerator = Accelerator(log_with="wandb")
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
 DATA_PATH = "data"
 URL_MODEL = "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/blob/main/vae-ft-mse-840000-ema-pruned.safetensors"
@@ -42,9 +42,9 @@ def vae_config_dict(args):
         "in_channels": 1,
         "out_channels": 1,
         "latent_channels": args.latent_channels,
-        "down_block_types": ("DownEncoderBlock2D",) * 4,
-        "up_block_types": ("UpDecoderBlock2D",) * 4,
-        "block_out_channels": (64, 128, 256, 512),
+        "down_block_types": ("DownEncoderBlock2D",) * 3,
+        "up_block_types": ("UpDecoderBlock2D",) * 3,
+        "block_out_channels": (32, 64, 128),
         "sample_size": 64,
         "mid_block_add_attention": True
     }
@@ -55,15 +55,17 @@ def vq_config_dict(args):
         "in_channels": 1,
         "out_channels": 1,
         "latent_channels": args.latent_channels,
-        "down_block_types": ("DownEncoderBlock2D",) * 4,
-        "up_block_types": ("UpDecoderBlock2D",) * 4,
-        "block_out_channels": (64, 128, 256, 512),
+        "down_block_types":("DownEncoderBlock2D",) * 3,
+        "up_block_types": ("UpDecoderBlock2D",) * 3,
+        "block_out_channels": (32, 64, 128),
         "sample_size": 64,
         "layers_per_block": 1,
         "act_fn": "silu",
         "sample_size": 32,
         "num_vq_embeddings": 256,
         "norm_num_groups": 32,
+        "scaling_factor": 1,
+        "norm_type": "spatial"
     }   
     return config
 
@@ -115,29 +117,9 @@ def init_configure_model(args):
 
 
 
-def broadcast_from_main(value, max_len=1024):
-    # Only the main process creates the value
-    if accelerator.is_main_process:
-        raw = json.dumps(value).encode('utf-8')
-        tensor = torch.ByteTensor(list(raw))
-        padded = torch.nn.functional.pad(tensor, (0, max_len - tensor.size(0)))
-    else:
-        padded = torch.ByteTensor(max_len)
-
-    # Broadcast from rank 0 to all others
-    if dist.is_initialized():
-        dist.broadcast(padded, src=0)
-
-    # Decode on all ranks
-    raw_str = bytes(padded.tolist()).decode('utf-8').rstrip('\x00')
-    return json.loads(raw_str)
-
-def run(args):
-    accelerator = Accelerator(log_with="wandb")
+def run(args):   
     # Create a shared variable to store the values
     model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-    # Create a shared variable to store the values
-    # Create a shared variable to store the values
     model_id = None
     directory = None
     experiment_dict = None
@@ -153,10 +135,7 @@ def run(args):
         # Convert directory to string if it's a Path object
         directory_str = str(directory) if hasattr(directory, "__fspath__") else directory
         
-        # Store the path in a temporary file that all processes can access
-        # Use a location that all processes can definitely access
-        import os
-        import json
+        # Store in temporary file 
         temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
         with open(temp_path, "w") as f:
             f.write(directory_str)
@@ -174,8 +153,6 @@ def run(args):
 
     # Step 3: All non-main processes read the directory path and load values
     if not accelerator.is_main_process:
-        import os
-        import json
         temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
         with open(temp_path, "r") as f:
             directory = f.read().strip()
@@ -188,18 +165,20 @@ def run(args):
     # Clean up the temporary file
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        import os
         temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
+        device = get_device()
+        print(f'Current CUDA device is:{device}')
         if os.path.exists(temp_path):
             os.remove(temp_path)
+        if args.test_pipeline:
+            print_color("Test pipeline is enabled. Exiting.", "red")
+        else:
+            print_color("Experiment Running", "Green")
         
     # Dataset and Dataloader
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id])
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
-    device = get_device()
-    
-    print(f'Current CUDA device is:{device}')
-    
+
     # Model Instantiation
     model_config, trainer = init_configure_model(args)
     model = MODELS[args.model_name](**model_config)
@@ -216,7 +195,6 @@ def run(args):
         num_training_steps=num_training_steps)
     
     # Accelerator instantiation
-   
     model, optimizer, dataloader, scheduler = accelerator.prepare(
     model, optimizer, dataloader, scheduler)
     model = model.module if hasattr(model, "module") else model
@@ -251,13 +229,15 @@ def run(args):
         count = 0
         torch.cuda.empty_cache()
         for i, batch in enumerate(dataloader):
-            if i > 3:
+            if i > 2:
                 break
             for j in range(batch.shape[0]):
                 recons = model(batch[j].unsqueeze(0), return_dict=True).sample
                 plot_reconstruction(batch[j],recons, idx=count, directory=directory)
                 count += 1
                 del recons
+                if count > 5:
+                    break
 
             accelerator.end_training()
     
@@ -273,12 +253,12 @@ if __name__ == '__main__':
     parser.add_argument("--latent_channels", type=int, default=2, help="Number of latent channels")
 
     # Data parameters
-    parser.add_argument("--data_id", type=int, default=422, choices=[422, 522], help="Experiment number")
+    parser.add_argument("--data_id", type=int, default=522, choices=[422, 522], help="Experiment number")
     parser.add_argument("--avg_pooling", type=bool, default=True, help="Apply average pooling to the images")
     
     # Training parameters
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
-    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate training model")
+    parser.add_argument("--lr", type=float, default=1e-5, help="learning rate training model")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     parser.add_argument("--beta_recons", type=float, default=1, help="weight MSE Loss")
     parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
@@ -297,4 +277,10 @@ if __name__ == '__main__':
     # model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
     # model_id, directory = create_directory(model_name_dir, args.data_id)
     # experiment_dict = build_experiment_metadata(args)
-    run(args)
+    try:
+        run(args)
+    except Exception as e:
+        accelerator.end_training()
+        if accelerator.is_main_process:
+            print_color("Experiment Failed", "red")
+            print(f"❌ Failed to compute: {e}")
