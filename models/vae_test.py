@@ -43,6 +43,7 @@ def test_autoencoder_compatibility():
                 sample_size=64  # This doesn't limit input size
             )
 
+            
             # Move model to device
             vae = vae.to(device)
 

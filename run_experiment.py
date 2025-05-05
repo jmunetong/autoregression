@@ -17,6 +17,7 @@ from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
 from losses import IntensityWeightedMSELoss
 from trainers import TrainerVAE, TrainerVQ
+from plot import plot_reconstruction
 
 
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
@@ -237,7 +238,6 @@ def run(args):
     
     train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
     train_pipeline.run_train(dataloader, experiment_dict, directory)
-    
     if accelerator.is_main_process:
         with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
             yaml.dump(experiment_dict, f, default_flow_style=False)
@@ -247,7 +247,19 @@ def run(args):
 
         print_color('Training Complete',"green")
         print_color(f"Model information stored in: {directory}", "yellow")
-        accelerator.end_training()
+        model.eval()
+        count = 0
+        torch.cuda.empty_cache()
+        for i, batch in enumerate(dataloader):
+            if i > 3:
+                break
+            for j in range(batch.shape[0]):
+                recons = model(batch[j].unsqueeze(0), return_dict=True).sample
+                plot_reconstruction(batch[j],recons, idx=count, directory=directory)
+                count += 1
+                del recons
+
+            accelerator.end_training()
     
 
 

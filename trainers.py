@@ -76,7 +76,7 @@ class TrainerVQ(BaseTrainer):
                 epoch_loss += loss_i.item()
 
                 epoch_recon_loss += recon_loss_i.item()
-                tqdm.write(f"Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                tqdm.write(f"Epoch {epoch} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
                 
                 # Step optimizer after accumulating gradients
                 self.optimizer.step()
@@ -105,7 +105,8 @@ class TrainerVAE(BaseTrainer):
         beta_recons = self.args.beta_recons
 
         for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
-            print(f"Epoch {epoch+1}/{self.args.num_epochs}")    
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}/{self.args.num_epochs}")     
             epoch_loss = 0.0
             epoch_kl_loss = 0.0
             epoch_recon_loss = 0.0
@@ -150,7 +151,7 @@ class TrainerVAE(BaseTrainer):
                 epoch_loss += loss_i.item()
                 epoch_kl_loss += kl_loss_i.item()
                 epoch_recon_loss += recon_loss_i.item()
-                tqdm.write(f"Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                tqdm.write(f"Epoch {epoch} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
                 
                 
             # Update epoch metrics with batch averages
@@ -158,6 +159,7 @@ class TrainerVAE(BaseTrainer):
             epoch_kl_loss /= len(data_loader)
             epoch_recon_loss /= len(data_loader)
             
+
             print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
 
