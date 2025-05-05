@@ -16,7 +16,7 @@ def preprocess_images(img:np.ndarray, repeat_dim=False):
     if img.shape[-1]==1 and repeat_dim:
         img = img.repeat(3, axis=-1)
 
-    img[:,10:, :] = 0
+    img[:,:10, :] = 0
     img[:,:, :10]  = 0
     img[:,-10:,:]  = 0
     img[:,:, -10:] = 0
