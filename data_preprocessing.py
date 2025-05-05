@@ -59,3 +59,5 @@ class XrdDataset(Dataset):
 
         return img.squeeze(0)
 
+
+
