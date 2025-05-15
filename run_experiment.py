@@ -15,8 +15,8 @@ from diffusers import AutoencoderKL, VQModel
 
 from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
-from losses import IntensityWeightedMSELoss
-from trainers import TrainerVAE, TrainerVQ
+from train_utils.losses import IntensityWeightedMSELoss
+from train_utils.trainers import TrainerVAE, TrainerVQ
 from plot import plot_reconstruction
 
 accelerator = Accelerator(log_with="wandb")
@@ -109,17 +109,8 @@ def init_configure_model(args):
 
 
 
-def run(args):   
-    # Create a shared variable to store the values
-    model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-    model_id = None
-    directory = None
-    experiment_dict = None
-
-    model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-    torch.cuda.empty_cache()
-
-    # Step 1: Main process creates directory and metadata
+def configure_training(args, model_name_dir):
+        # Step 1: Main process creates directory and metadata
     if accelerator.is_main_process:
         model_id, directory = create_directory(model_name_dir, args.data_id)
         experiment_dict = build_experiment_metadata(args)
@@ -166,9 +157,25 @@ def run(args):
             print_color("Test pipeline is enabled. Exiting.", "red")
         else:
             print_color("Experiment Running", "Green")
-        
+
+    return model_id, directory, experiment_dict
+    
+
+def run(args):   
+    # Create a shared variable to store the values
+    model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
+    model_id = None
+    directory = None
+    experiment_dict = None
+
+    model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
+    torch.cuda.empty_cache()
+
+    # Configure training
+    model_id, directory, experiment_dict = configure_training(args, model_name_dir)
+
     # Dataset and Dataloader
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id])
+    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.top_k)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
 
     # Model Instantiation
@@ -247,6 +254,8 @@ if __name__ == '__main__':
     # Data parameters
     parser.add_argument("--data_id", type=int, default=522, choices=[422, 522], help="Experiment number")
     parser.add_argument("--avg_pooling", type=bool, default=True, help="Apply average pooling to the images")
+    parser.add_argument("--top_k", type=int, default=1, help="Top k percent of images to use for training")
+
     
     # Training parameters
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
@@ -254,7 +263,7 @@ if __name__ == '__main__':
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
     parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
-    parser.add_argument("--alpha_mse", type=float, default=0.2, help="Alpha for Intensity Weighted MSE Loss")
+    parser.add_argument("--alpha_mse", type=float, default=0.2, help="Alpha for Intensity Weighted MSE Loss") #TODO: ADD THID PARAMETER TO THE CODEBASE
 
     # Pipeline parameters
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
@@ -264,11 +273,13 @@ if __name__ == '__main__':
         action="store_true",
         help="Enable test pipeline (default: False)"
     )
+
+    # Arguments for variational autoencoder.
+    parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
+    parser.add_argument("--annealing_shape", type=str, default="cosine", choices=["linear", "cosine", "logistic"], help="Shape of the annealing function")
  
     args = parser.parse_args()
-    # model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-    # model_id, directory = create_directory(model_name_dir, args.data_id)
-    # experiment_dict = build_experiment_metadata(args)
+
     try:
         run(args)
     except Exception as e:

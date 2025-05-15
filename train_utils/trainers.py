@@ -3,7 +3,11 @@ import os
 import torch
 from tqdm import tqdm
 
+from .annealing import Annealer
+
 TEST_LEGNTH = 3
+
+
 
 class BaseTrainer():
     def __init__(self, args, model, optimizer, scheduler, accelerator,  recons_loss):
@@ -107,6 +111,16 @@ class TrainerVQ(BaseTrainer):
 class TrainerVAE(BaseTrainer):
     def __init__(self, args, model, optimizer, scheduler, accelerator, recons_loss):
         super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss)
+        self.use_annealing = args.use_annealing
+        if self.use_annealing:
+            total_steps = args.num_epochs
+            shape = args.annealing_shape
+            baseline = 0.0
+            cyclical = False
+            disable = False
+
+            self.annealer = Annealer(total_steps, shape, baseline, cyclical)
+
        
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
@@ -146,8 +160,10 @@ class TrainerVAE(BaseTrainer):
                 # Loss Function Computation
                 kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
                 kl_loss_i /= batch.size(0)
+                kl_loss_i = self.annealer(kl_loss_i) if self.use_annealing else kl_loss_i
                 recon_loss_i = self.recons_loss(recon_i, batch)
-                loss_i = beta_recons * recon_loss_i + kl_loss_i #TODO TEST THIS PARAMETER
+                loss_i = beta_recons * recon_loss_i + kl_loss_i 
+        
                 
                 self.accelerator.backward(loss_i)
                 
@@ -169,7 +185,8 @@ class TrainerVAE(BaseTrainer):
             epoch_recon_loss /= len(data_loader)
             
 
-            print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
 
             # Saving Best model
