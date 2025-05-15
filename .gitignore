@@ -186,3 +186,5 @@ vae_model/
 *.zip
 experiments/*
 experiments.zip
+load_model.py
+test_images/

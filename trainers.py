@@ -27,7 +27,14 @@ class BaseTrainer():
         #     self.model.save_pretrained(os.path.join(directory, f"vq_model_pretrained"))
         # except Exception as e:
         #     print(f"Error saving feature extractor: {e}")
-        self.accelerator.save_model(self.model, directory)
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        # self.accelerator.save_model(self.model, directory)
+
+        unwrapped_model.save_pretrained(
+        directory,
+        is_main_process=self.accelerator.is_main_process,
+        save_function=self.accelerator.save,
+)
 
 
 
@@ -37,6 +44,7 @@ class TrainerVQ(BaseTrainer):
     
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
+        beta_recons = self.args.beta_recons
         for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}/{self.args.num_epochs}")    
@@ -67,13 +75,11 @@ class TrainerVQ(BaseTrainer):
                 recons = out.sample
                 # Loss Function Computation
                 recon_loss_i = self.recons_loss(recons, batch)
-                loss_i = recon_loss_i + loss_i
+                loss_i = beta_recons * recon_loss_i + loss_i
                 self.accelerator.backward(loss_i)
                 self.optimizer.step()
                 self.scheduler.step()
                 
-                
-    
                 # Track metrics
                 epoch_loss += loss_i.item()
 

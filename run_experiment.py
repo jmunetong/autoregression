@@ -42,9 +42,9 @@ def vae_config_dict(args):
         "in_channels": 1,
         "out_channels": 1,
         "latent_channels": args.latent_channels,
-        "down_block_types": ("DownEncoderBlock2D",) * 3,
-        "up_block_types": ("UpDecoderBlock2D",) * 3,
-        "block_out_channels": (32, 64, 128),
+        "down_block_types": ("DownEncoderBlock2D",) * 4,
+        "up_block_types": ("UpDecoderBlock2D",) * 4,
+        "block_out_channels": (32, 64, 128, 128),
         "sample_size": 64,
         "mid_block_add_attention": True
     }
@@ -55,9 +55,9 @@ def vq_config_dict(args):
         "in_channels": 1,
         "out_channels": 1,
         "latent_channels": args.latent_channels,
-        "down_block_types":("DownEncoderBlock2D",) * 3,
-        "up_block_types": ("UpDecoderBlock2D",) * 3,
-        "block_out_channels": (32, 64, 128),
+        "down_block_types":("DownEncoderBlock2D",) * 4,
+        "up_block_types": ("UpDecoderBlock2D",) * 4,
+        "block_out_channels": (32, 64, 128, 128),
         "sample_size": 64,
         "layers_per_block": 1,
         "act_fn": "silu",
@@ -106,14 +106,6 @@ def init_configure_model(args):
         return vq_config_dict(args), TrainerVQ
     else:
         raise ValueError(f"Unknown model name: {args.model_name}")
-
-# @accelerator.on_main_process
-# def prepare_directory(args):
-#     model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-#     model_id, directory = create_directory(model_name_dir, args.data_id)
-#     experiment_dict = build_experiment_metadata(args)
-#     torch.cuda.empty_cache()
-#     return model_id, experiment_dict, directory
 
 
 
@@ -260,7 +252,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=1e-5, help="learning rate training model")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
-    parser.add_argument("--beta_recons", type=float, default=1, help="weight MSE Loss")
+    parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
     parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
     parser.add_argument("--alpha_mse", type=float, default=0.2, help="Alpha for Intensity Weighted MSE Loss")
 
