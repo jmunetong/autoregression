@@ -1,5 +1,6 @@
 import os
 
+import yaml
 import torch
 from tqdm import tqdm
 
@@ -37,6 +38,10 @@ class BaseTrainer():
         is_main_process=self.accelerator.is_main_process,
         save_function=self.accelerator.save,
 )
+        
+    def _save_experiment_config(self, experiment_dict, directory):
+        with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
+            yaml.dump(experiment_dict, f, default_flow_style=False)
 
 
 
@@ -67,6 +72,7 @@ class TrainerVQ(BaseTrainer):
                     latents = self.model.encode(batch, return_dict=True).latents
                     experiment_dict["input_shape"] = list(batch.shape[1:])
                     experiment_dict["latent_shape"] = list(latents.shape[1:])
+                    self._save_experiment_config(experiment_dict, directory)
                     print(f"Batch shape: {batch.shape}")
                     print(f"Latent sample shape: {latents.shape}")
                     out = self.model.decode(latents, return_dict=True)
@@ -86,7 +92,8 @@ class TrainerVQ(BaseTrainer):
                 epoch_loss += loss_i.item()
 
                 epoch_recon_loss += recon_loss_i.item()
-                tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                if self.accelerator.is_main_process:
+                    tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
                 del recon_loss_i, recons
                 
                 # Step optimizer after accumulating gradients
@@ -150,6 +157,9 @@ class TrainerVAE(BaseTrainer):
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     experiment_dict["input_shape"] = list(batch.shape[1:])
                     experiment_dict["latent_shape"] = list(posterior_sample.shape[1:])
+                    self._save_experiment_config(experiment_dict, directory)
+                    import sys;
+                    sys.exit(0)
                     print(f"Batch shape: {batch.shape}")
                     print(f"Posterior sample shape: {posterior_sample.shape}")
                 

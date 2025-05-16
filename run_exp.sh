@@ -2,7 +2,7 @@
 
 LATENT_CHANNELS=1
 NUM_EPOCHS=20
-B_VAE=2
+B_VAE=1
 KL_MODEL="vae_kl"
 VQ_MODEL="vq"
 LOSSES=("mse" "l1" "iwmse")

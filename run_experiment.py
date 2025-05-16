@@ -164,9 +164,7 @@ def configure_training(args, model_name_dir):
 def run(args):   
     # Create a shared variable to store the values
     model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-    model_id = None
-    directory = None
-    experiment_dict = None
+    
 
     model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
     torch.cuda.empty_cache()
@@ -175,7 +173,7 @@ def run(args):
     model_id, directory, experiment_dict = configure_training(args, model_name_dir)
 
     # Dataset and Dataloader
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.top_k)
+    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
 
     # Model Instantiation
@@ -216,8 +214,6 @@ def run(args):
     train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
     train_pipeline.run_train(dataloader, experiment_dict, directory)
     if accelerator.is_main_process:
-        with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
-            yaml.dump(experiment_dict, f, default_flow_style=False)
         
         with open(os.path.join(directory, "config.json"), "w") as file:
             json.dump(model_config, file)
@@ -253,17 +249,15 @@ if __name__ == '__main__':
 
     # Data parameters
     parser.add_argument("--data_id", type=int, default=522, choices=[422, 522], help="Experiment number")
-    parser.add_argument("--avg_pooling", type=bool, default=True, help="Apply average pooling to the images")
-    parser.add_argument("--top_k", type=int, default=1, help="Top k percent of images to use for training")
+    parser.add_argument("--avg_pooling", type=bool, default=False, help="Apply average pooling to the images")
+    parser.add_argument("--topk", type=float, default=1.0, help="Top k percent of images to use for training")
 
-    
     # Training parameters
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=1e-5, help="learning rate training model")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
     parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
-    parser.add_argument("--alpha_mse", type=float, default=0.2, help="Alpha for Intensity Weighted MSE Loss") #TODO: ADD THID PARAMETER TO THE CODEBASE
 
     # Pipeline parameters
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
