@@ -7,8 +7,6 @@ from .annealing import Annealer
 
 TEST_LEGNTH = 3
 
-
-
 class BaseTrainer():
     def __init__(self, args, model, optimizer, scheduler, accelerator,  recons_loss):
         self.args = args
