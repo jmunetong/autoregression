@@ -3,9 +3,8 @@ import os
 import yaml
 import torch
 from tqdm import tqdm
-from models.diff.image_trainer import ImageDataset
-
 from .annealing import Annealer
+from diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
 
 
 from typing import List
@@ -226,18 +225,93 @@ class TrainerVAE(BaseTrainer):
                 self.save_model(directory)
 
 
-class TrainMAR(BaseTrainer):
+class TrainerMAR(BaseTrainer):
     def __init__(self, args, model, vae_model, optimizer, scheduler, accelerator, recons_loss):
         super().__init__(args, model, optimizer, scheduler, accelerator)
-        self.vae_model = vae_model
+        self.vae_model = model
         self._get_prediction_shape_image()
+        model_dim = dict(
+        dim = 1024,
+        depth = 12,
+        heads = 12)
+        self.patch_size = 8
 
+        self.model = ImageAutoregressiveDiffusion(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size)
+
+
+        ema_kwargs = dict() # TODO: Fix this line of code
+
+        if self.is_main:
+            self.ema_model = EMA(
+                self.model,
+                forward_method_names = ('sample',),
+                **ema_kwargs
+            )
+
+        self.ema_model.to(self.accelerator.device)
+
+        self.checkpoints_folder = Path(checkpoints_folder)
+        self.results_folder = Path(results_folder)
+
+        self.checkpoints_folder.mkdir(exist_ok = True, parents = True)
+        self.results_folder.mkdir(exist_ok = True, parents = True)
+
+        self.checkpoint_every = checkpoint_every
+        self.save_results_every = save_results_every
+
+        self.num_sample_rows = int(math.sqrt(num_samples))
+        assert (self.num_sample_rows ** 2) == num_samples, f'{num_samples} must be a square'
+        self.num_samples = num_samples
+
+        assert self.checkpoints_folder.is_dir()
+        assert self.results_folder.is_dir()
 
     def _get_prediction_shape_image(self):
         self.vae_model.eval()
         with torch.no_grad():
-            image_shape = None
             self.image_shape = self.vae_model.sample().shape[-3:]
+    
+    def run_trainer():
+        def forward(self):
+
+        dl = cycle(self.dl)
+
+        for ind in range(self.num_train_steps):
+            step = ind + 1
+
+            self.model.train()
+
+            data = next(dl)
+            loss = self.model(data)
+
+            self.accelerator.print(f'[{step}] loss: {loss.item():.3f}')
+            self.accelerator.backward(loss)
+
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+
+            if self.is_main:
+                self.ema_model.update()
+
+            self.accelerator.wait_for_everyone()
+
+            if self.is_main:
+                if divisible_by(step, self.save_results_every):
+
+                    with torch.no_grad():
+                        sampled = self.ema_model.sample(batch_size = self.num_samples)
+
+                    sampled.clamp_(0., 1.)
+                    save_image(sampled, str(self.results_folder / f'results.{step}.png'), nrow = self.num_sample_rows)
+
+                if divisible_by(step, self.checkpoint_every):
+                    self.save(f'checkpoint.{step}.pt')
+
+            self.accelerator.wait_for_everyone()
+
+
+        print('training complete')
+
 
     
     @property
@@ -255,15 +329,9 @@ class TrainMAR(BaseTrainer):
         )
 
         torch.save(save_package, str(self.checkpoints_folder / path))
+
+
         
-    
-
-    
-
-
-
-
-
 
 # trainer
 
