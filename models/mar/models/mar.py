@@ -65,7 +65,7 @@ class MAR(nn.Module):
         # MAR variant masking ratio, a left-half truncated Gaussian centered at 100% masking ratio with std 0.25
         self.mask_ratio_generator = stats.truncnorm((mask_ratio_min - 1.0) / 0.25, 0, loc=1.0, scale=0.25)
 
-        # --------------------------------------------------------------------------
+        # -----------------------------------------------------------------------
         # MAR encoder specifics
         self.z_proj = nn.Linear(self.token_embed_dim, encoder_embed_dim, bias=True)
         self.z_proj_ln = nn.LayerNorm(encoder_embed_dim, eps=1e-6)

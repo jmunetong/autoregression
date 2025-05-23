@@ -57,20 +57,6 @@ def files_to_img(z_arrays, sample_id = None, verbose=False):
 
 
 
-# def get_imgs(directory_list):
-#     """
-#     Get images from Zarr files in the specified directories.
-
-#     Args:
-#         directory_list (list): List of directories containing Zarr files.
-
-#     Returns:
-#         tuple: Tuple containing the list of images and the list of Zarr arrays.
-#     """
-#     z_arrays = load_zarr_files(directory_list)
-#     images = files_to_img(z_arrays)
-#     return images, z_arrays
-
 def get_directories(path, sub_dir="images"):
     """"""
     directories  = [os.path.join(path,d, sub_dir) for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]

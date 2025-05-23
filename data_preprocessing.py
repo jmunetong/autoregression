@@ -25,7 +25,7 @@ def preprocess_images(img:np.ndarray, repeat_dim=False):
 
 # Define a dataset that loads your images.
 class XrdDataset(Dataset):
-    def __init__(self, data_dir, data_id, feature_extractor=None, rescale=False, apply_pooling=False, top_k=1.0):
+    def __init__(self, data_dir, data_id, feature_extractor=None, rescale=False, apply_pooling=False, top_k=1.0, filter_size=3):
         self.data_id = data_id
         self.zarr_pointers = load_zarr_files(get_directories(data_dir), data_id=data_id)
         self.top_k = int(len(self.zarr_pointers) * min(top_k,1.0))
@@ -34,7 +34,7 @@ class XrdDataset(Dataset):
         self.feature_extractor = feature_extractor
         self.rescale = rescale
         self.apply_pool = apply_pooling
-        self.filter_size = 3 #TODO: ADD PARAMETER TODO THIS
+        self.filter_size = filter_size #TODO: ADD PARAMETER TODO THIS
         self.avg_pooler = nn.AvgPool2d(kernel_size=(self.filter_size,self.filter_size))
         self.i = 0
         
