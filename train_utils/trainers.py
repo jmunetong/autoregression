@@ -271,41 +271,49 @@ class TrainerMAR(BaseTrainer):
         with torch.no_grad():
             self.image_shape = self.vae_model.sample().shape[-3:]
     
-    def run_trainer():
-        def forward(self):
+    def run_trainer(self, data_loader, experiment_dict, directory):
 
         dl = cycle(self.dl)
 
-        for ind in range(self.num_train_steps):
-            step = ind + 1
+        best_loss = float('inf')
+        beta_recons = self.args.beta_recons
+        self.model.train()
 
-            self.model.train()
+        for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}/{self.args.num_epochs}")     
+            epoch_loss = 0.0
+            epoch_kl_loss = 0.0
+            epoch_recon_loss = 0.0
 
-            data = next(dl)
-            loss = self.model(data)
 
-            self.accelerator.print(f'[{step}] loss: {loss.item():.3f}')
-            self.accelerator.backward(loss)
+            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):
+            
 
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+                loss = self.model(batch)
+
+                self.accelerator.print(f'[{i * epoch}] loss: {loss.item():.3f}')
+                self.accelerator.backward(loss)
+
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                if self.is_main:
+                    self.ema_model.update()
+
+                self.accelerator.wait_for_everyone()
 
             if self.is_main:
-                self.ema_model.update()
-
-            self.accelerator.wait_for_everyone()
-
-            if self.is_main:
-                if divisible_by(step, self.save_results_every):
+                if divisible_by(i, self.save_results_every):
 
                     with torch.no_grad():
                         sampled = self.ema_model.sample(batch_size = self.num_samples)
 
                     sampled.clamp_(0., 1.)
-                    save_image(sampled, str(self.results_folder / f'results.{step}.png'), nrow = self.num_sample_rows)
+                    save_image(sampled, str(self.results_folder / f'results.{i*epoch_kl_loss}.png'), nrow = self.num_sample_rows)
 
-                if divisible_by(step, self.checkpoint_every):
-                    self.save(f'checkpoint.{step}.pt')
+                if divisible_by(i *epoch, self.checkpoint_every):
+                    self.save(f'checkpoint.{i}.pt')
 
             self.accelerator.wait_for_everyone()
 
@@ -335,98 +343,22 @@ class TrainerMAR(BaseTrainer):
 
 # trainer
 
-class ImageTrainer(Module):
-    def __init__(
-        self,
-        model,
-        *,
-        dataset: Dataset,
-        num_train_steps = 70_000,
-        learning_rate = 3e-4,
-        batch_size = 16,
-        checkpoints_folder: str = './checkpoints',
-        results_folder: str = './results',
-        save_results_every: int = 100,
-        checkpoint_every: int = 1000,
-        num_samples: int = 16,
-        adam_kwargs: dict = dict(),
-        accelerate_kwargs: dict = dict(),
-        ema_kwargs: dict = dict()
-    ):
-        super().__init__()
-        self.accelerator = Accelerator(**accelerate_kwargs)
-
-        self.model = model
-
-        if self.is_main:
-            self.ema_model = EMA(
-                self.model,
-                forward_method_names = ('sample',),
-                **ema_kwargs
-            )
-
-            self.ema_model.to(self.accelerator.device)
-
-        self.optimizer = Adam(model.parameters(), lr = learning_rate, **adam_kwargs)
-        self.dl = DataLoader(dataset, batch_size = batch_size, shuffle = True, drop_last = True)
-
-        self.model, self.optimizer, self.dl = self.accelerator.prepare(self.model, self.optimizer, self.dl)
-
-        self.num_train_steps = num_train_steps
-
-        self.checkpoints_folder = Path(checkpoints_folder)
-        self.results_folder = Path(results_folder)
-
-        self.checkpoints_folder.mkdir(exist_ok = True, parents = True)
-        self.results_folder.mkdir(exist_ok = True, parents = True)
-
-        self.checkpoint_every = checkpoint_every
-        self.save_results_every = save_results_every
-
-        self.num_sample_rows = int(math.sqrt(num_samples))
-        assert (self.num_sample_rows ** 2) == num_samples, f'{num_samples} must be a square'
-        self.num_samples = num_samples
-
-        assert self.checkpoints_folder.is_dir()
-        assert self.results_folder.is_dir()
-
-
-    def forward(self):
-
-        dl = cycle(self.dl)
-
-        for ind in range(self.num_train_steps):
-            step = ind + 1
-
-            self.model.train()
-
-            data = next(dl)
-            loss = self.model(data)
-
-            self.accelerator.print(f'[{step}] loss: {loss.item():.3f}')
-            self.accelerator.backward(loss)
-
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-
-            if self.is_main:
-                self.ema_model.update()
-
-            self.accelerator.wait_for_everyone()
-
-            if self.is_main:
-                if divisible_by(step, self.save_results_every):
-
-                    with torch.no_grad():
-                        sampled = self.ema_model.sample(batch_size = self.num_samples)
-
-                    sampled.clamp_(0., 1.)
-                    save_image(sampled, str(self.results_folder / f'results.{step}.png'), nrow = self.num_sample_rows)
-
-                if divisible_by(step, self.checkpoint_every):
-                    self.save(f'checkpoint.{step}.pt')
-
-            self.accelerator.wait_for_everyone()
-
-
-        print('training complete')
+# class ImageTrainer(Module):
+#     def __init__(
+#         self,
+#         model,
+#         *,
+#         dataset: Dataset,
+#         num_train_steps = 70_000,
+#         learning_rate = 3e-4,
+#         batch_size = 16,
+#         checkpoints_folder: str = './checkpoints',
+#         results_folder: str = './results',
+#         save_results_every: int = 100,
+#         checkpoint_every: int = 1000,
+#         num_samples: int = 16,
+#         adam_kwargs: dict = dict(),
+#         accelerate_kwargs: dict = dict(),
+#         ema_kwargs: dict = dict()
+#     ):
+ 
