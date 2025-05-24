@@ -16,7 +16,7 @@ from diffusers import AutoencoderKL, VQModel
 from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
 from train_utils.losses import IntensityWeightedMSELoss
-from train_utils.trainers import TrainerVAE, TrainerVQ
+from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion
 from plot import plot_reconstruction
 
 accelerator = Accelerator(log_with="wandb")
@@ -226,6 +226,18 @@ def run(args):
         print_color("Training VAE model", "blue")
         train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
         train_pipeline.run_train(dataloader, experiment_dict, directory)
+    else:
+        with open(os.path.join(args.pretrained_vae, "config.yaml"), "w") as fil
+            model_config_load  = yaml.safe_load(fil)
+        safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
+        if not os.path.exists(safe_tensor_path):
+            if accelerator.is_main_process:
+                print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
+            return
+        else:
+            model = MODELS[args.model_name].from_pretrained(args.pretrained_vae, config=model_config_load)
+            model = accelerator.prepare(model)
+
     
     if args.diff:
         print_color("Training Diffusion model", "blue")
@@ -243,7 +255,10 @@ def run(args):
         model.eval()
         count = 0
         torch.cuda.empty_cache()
-        generate_vae_samples(model, dataloader, directory)
+        if not args.diff:
+            generate_vae_samples(model, dataloader, directory)
+        else:
+            pass
 
     accelerator.end_training()
     
@@ -286,8 +301,8 @@ if __name__ == '__main__':
     # Diffusion model arguments
     parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
     parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
+    parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
     
- 
     args = parser.parse_args()
 
     try:

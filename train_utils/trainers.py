@@ -224,7 +224,7 @@ class TrainerVAE(BaseTrainer):
                 self.save_model(directory)
             self.accelerator.wait_for_everyone()
 
-class TrainerMAR(BaseTrainer):
+class TrainerDiffusion(BaseTrainer):
     def __init__(self, args, model, optimizer, scheduler, accelerator):
         super().__init__(args, model, optimizer, scheduler, accelerator)
         self.vae_model = model
