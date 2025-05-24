@@ -235,8 +235,7 @@ class TrainerDiffusion(BaseTrainer):
         heads = 12) #TODO: Add experiment parameters for these values
         self.patch_size = 8 # TODO: Add experiment parameters for this value
 
-        self.model = ImageAutoregressiveDiffusion(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size)
-        self.model = self.accelerator.prepare(self.model)
+        self.model = self.accelerator.prepare(ImageAutoregressiveDiffusion(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size))
 
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -287,14 +286,13 @@ class TrainerDiffusion(BaseTrainer):
 
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
+            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
 
             # Saving Best model
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
-                # self.save_model(directory)
                 self.save(directory)
 
             self.accelerator.wait_for_everyone()

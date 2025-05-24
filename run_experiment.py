@@ -231,7 +231,7 @@ def run(args):
         train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
         train_pipeline.run_train(dataloader, experiment_dict, directory)
     else:
-        with open(os.path.join(args.pretrained_vae, "config.yaml"), "w") as fil
+        with open(os.path.join(args.pretrained_vae, "config.yaml"), "w") as fil:
             model_config_load  = yaml.safe_load(fil)
         safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
         if not os.path.exists(safe_tensor_path):
