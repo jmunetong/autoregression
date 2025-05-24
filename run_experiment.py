@@ -181,9 +181,17 @@ def configure_training(args, model_name_dir):
 
     return model_id, directory, experiment_dict
     
+def update_args(args, state_dict):
+    for key, value in state_dict.items():
+        if hasattr(args, key):
+            setattr(args, key, value)
 
 def run(args):   
     # Create a shared variable to store the values
+    if args.diff and args.pretrained_vae:
+        with open(os.path.join(args.pretrained_vae, "experiment_config.yml"), "r") as file:
+            state_dict = yaml.safe_load(file)
+        update_args(args,state_dict )
     md_name = args.model_name if not args.diff else f"diff_{args.model_name}"
     model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
     torch.cuda.empty_cache()
@@ -199,7 +207,8 @@ def run(args):
     model_config, trainer = init_configure_model(args)
     model = MODELS[args.model_name](**model_config)
     model.train()
-    # Optimizer
+    # 
+
     num_training_steps = len(dataloader) * args.num_epochs
     num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
@@ -226,14 +235,18 @@ def run(args):
         args.model_name,
         config=args_dict
     )
-    if args.train_vae:
+    if args.train_vae or not args.diff:
         print_color("Training VAE model", "blue")
         train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
         train_pipeline.run_train(dataloader, experiment_dict, directory)
     else:
-        with open(os.path.join(args.pretrained_vae, "config.yaml"), "w") as fil:
+        
+        with open(os.path.join(args.pretrained_vae, "config.yaml"), "r") as fil:
             model_config_load  = yaml.safe_load(fil)
+        
+        
         safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
+   
         if not os.path.exists(safe_tensor_path):
             if accelerator.is_main_process:
                 print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
@@ -242,10 +255,10 @@ def run(args):
             model = MODELS[args.model_name].from_pretrained(args.pretrained_vae, config=model_config_load)
             model = accelerator.prepare(model)
 
-    
     if args.diff:
         print_color("Training Diffusion model", "blue")
-        diffusion_trainer = TrainerDiffusion(args, model, optimizer, scheduler, accelerator, recons_loss)
+        from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
+        diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, recons_loss)
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
 
 
@@ -305,13 +318,14 @@ if __name__ == '__main__':
     parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
     parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
     parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
+    parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
     
     args = parser.parse_args()
-
-    try:
-        run(args)
-    except Exception as e:
-        accelerator.end_training()
-        if accelerator.is_main_process:
-            print_color("Experiment Failed", "red")
-            print(f"❌ Failed to compute: {e}")
+    run(args)
+    # try:
+        
+    # except Exception as e:
+    #     accelerator.end_training()
+    #     if accelerator.is_main_process:
+    #         print_color("Experiment Failed", "red")
+    #         print(f"❌ Failed to compute: {e}")

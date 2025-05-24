@@ -4,8 +4,6 @@ import yaml
 import torch
 from tqdm import tqdm
 from .annealing import Annealer
-from diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
-
 
 from typing import List
 
@@ -44,15 +42,7 @@ class BaseTrainer():
         raise NotImplementedError("This method should be overridden by subclasses.")
 
     def save_model(self, directory):
-        # Save the model
-        # torch.save(self.model.state_dict(), os.path.join(directory, f"vq_model.pth"))
-        # try:
-        #     self.model.save_pretrained(os.path.join(directory, f"vq_model_pretrained"))
-        # except Exception as e:
-        #     print(f"Error saving feature extractor: {e}")
         unwrapped_model = self.accelerator.unwrap_model(self.model)
-        # self.accelerator.save_model(self.model, directory)
-
         unwrapped_model.save_pretrained(
         directory,
         is_main_process=self.accelerator.is_main_process,
@@ -225,7 +215,7 @@ class TrainerVAE(BaseTrainer):
             self.accelerator.wait_for_everyone()
 
 class TrainerDiffusion(BaseTrainer):
-    def __init__(self, args, model, optimizer, scheduler, accelerator):
+    def __init__(self, args, model,image_model, optimizer, scheduler, accelerator):
         super().__init__(args, model, optimizer, scheduler, accelerator)
         self.vae_model = model
         self._get_prediction_shape_image()
@@ -235,7 +225,7 @@ class TrainerDiffusion(BaseTrainer):
         heads = 12) #TODO: Add experiment parameters for these values
         self.patch_size = 8 # TODO: Add experiment parameters for this value
 
-        self.model = self.accelerator.prepare(ImageAutoregressiveDiffusion(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size))
+        self.model = self.accelerator.prepare(img_model(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size))
 
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -248,7 +238,6 @@ class TrainerDiffusion(BaseTrainer):
 
         self.ema_model.to(self.accelerator.device)
 
-
     def _get_prediction_shape_image(self):
         self.vae_model.eval()
         with torch.no_grad():
@@ -260,13 +249,10 @@ class TrainerDiffusion(BaseTrainer):
         self.model_vae.eval()
         self.model.train()
 
-        for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
+        for epoch in range(self.args.diff_epochs if not self.args.test_pipeline else TEST_LEGNTH):
             if self.accelerator.is_main_process:
-                print(f"Epoch {epoch+1}/{self.args.num_epochs}")     
+                print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
             epoch_loss = 0.0
-            epoch_kl_loss = 0.0
-            epoch_recon_loss = 0.0
-
             for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
                 # Decoding step
                 loss_i = self.model(self.vae_model.encode(batch).latent_dist.sample())
