@@ -258,6 +258,7 @@ class TrainerDiffusion(BaseTrainer):
     def run_trainer(self, data_loader, experiment_dict, directory):
 
         best_loss = float('inf')
+        self.model_vae.eval()
         self.model.train()
 
         for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
@@ -267,15 +268,12 @@ class TrainerDiffusion(BaseTrainer):
             epoch_kl_loss = 0.0
             epoch_recon_loss = 0.0
 
-            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):
-        
-                loss_i = self.model(batch)
+            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
+                # Decoding step
+                loss_i = self.model(self.vae_model.encode(batch).latent_dist.sample())
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
-                    # experiment_dict["input_shape"] = list(batch.shape[1:])
-                    # experiment_dict["latent_shape"] = list(posterior_sample.shape[1:])
                     self._save_experiment_config(experiment_dict, directory)
                    
-                  
                 self.accelerator.backward(loss_i)
 
                 self.optimizer.step()

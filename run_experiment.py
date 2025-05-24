@@ -72,6 +72,7 @@ def vq_config_dict(args):
 
 
 def generate_vae_samples(model, dataloader, directory):
+    count = 0
     for i, batch in enumerate(dataloader):
         if i > 2:
             break
@@ -83,8 +84,14 @@ def generate_vae_samples(model, dataloader, directory):
             if count > 5:
                 break
 
-            
-
+def generate_vae_samples(model, diff_model, dataloader, directory):
+    count = 4  
+    batch = diff_model.sample(batch_size=count)
+    for j in range(count):
+        batch = diff_model.sample()
+        recons = model(batch.unsqueeze(0), return_dict=True).sample
+        plot_reconstruction(batch,recons, idx=count, directory=directory)
+        
 def build_experiment_metadata(args):
     metadata = {
         "model_name": args.model_name,
@@ -246,14 +253,13 @@ def run(args):
 
 
     if accelerator.is_main_process:
-        
         with open(os.path.join(directory, "config.json"), "w") as file:
             json.dump(model_config, file)
 
         print_color('Training Complete',"green")
         print_color(f"Model information stored in: {directory}", "yellow")
         model.eval()
-        count = 0
+        
         torch.cuda.empty_cache()
         if not args.diff:
             generate_vae_samples(model, dataloader, directory)
