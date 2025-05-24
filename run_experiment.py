@@ -17,7 +17,7 @@ from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
 from train_utils.losses import IntensityWeightedMSELoss
 from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion
-from plot import plot_reconstruction
+from plot import plot_reconstruction, plot_diff
 
 accelerator = Accelerator(log_with="wandb")
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
@@ -84,13 +84,12 @@ def generate_vae_samples(model, dataloader, directory):
             if count > 5:
                 break
 
-def generate_vae_samples(model, diff_model, dataloader, directory):
-    count = 4  
+def generate_diff_samples(model, diff_model, directory, count=4):
     batch = diff_model.sample(batch_size=count)
     for j in range(count):
         batch = diff_model.sample()
         recons = model(batch.unsqueeze(0), return_dict=True).sample
-        plot_reconstruction(batch,recons, idx=count, directory=directory)
+        plot_diff(recons, directory, idx=j)
         
 def build_experiment_metadata(args):
     metadata = {
@@ -185,10 +184,8 @@ def configure_training(args, model_name_dir):
 
 def run(args):   
     # Create a shared variable to store the values
-    model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
-    
-
-    model_name_dir = args.model_name if not args.test_pipeline else f"{args.model_name}_test"
+    md_name = args.model_name if not args.diff else f"diff_{args.model_name}"
+    model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
     torch.cuda.empty_cache()
 
     # Configure training
@@ -264,7 +261,7 @@ def run(args):
         if not args.diff:
             generate_vae_samples(model, dataloader, directory)
         else:
-            pass
+            generate_diff_samples(model, diffusion_trainer.get_diff_model(), directory)
 
     accelerator.end_training()
     

@@ -45,3 +45,8 @@ def plot_reconstruction(original: torch.Tensor, reconstructed: torch.Tensor, idx
     plt.tight_layout()
     plt.show()
     plt.savefig(os.path.join(directory, f'dir{idx}_.png'))
+
+def plot_diff(batch, directory, idx=0):
+    plt.plot(batch.detach().cpu().numpy())
+    plt.title("Diffusion Process Reconstruction")
+    plt.savefig(os.path.join(directory, f'diff_dir{idx}_.png'))
