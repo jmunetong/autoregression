@@ -99,6 +99,7 @@ class TrainerVQ(BaseTrainer):
 
                 else:
                     out = self.model(batch, return_dict=True)
+                self.accelerator.wait_for_everyone()
                 loss_i  = out.commit_loss
                 recons = out.sample
                 # Loss Function Computation
@@ -131,6 +132,7 @@ class TrainerVQ(BaseTrainer):
                 best_loss = epoch_loss
                 print(f"New best loss: {best_loss}")
                 self.save_model(directory)
+            self.accelerator.wait_for_everyone()
 
 
 class TrainerVAE(BaseTrainer):
@@ -182,6 +184,7 @@ class TrainerVAE(BaseTrainer):
                     sys.exit(0)
                     print(f"Batch shape: {batch.shape}")
                     print(f"Posterior sample shape: {posterior_sample.shape}")
+                self.accelerator.wait_for_everyone()
                 
                 recon_i = self.model.decode(posterior_sample).sample
                 
@@ -223,7 +226,7 @@ class TrainerVAE(BaseTrainer):
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
                 self.save_model(directory)
-
+            self.accelerator.wait_for_everyone()
 
 class TrainerMAR(BaseTrainer):
     def __init__(self, args, model, vae_model, optimizer, scheduler, accelerator, recons_loss):
@@ -250,14 +253,14 @@ class TrainerMAR(BaseTrainer):
 
         self.ema_model.to(self.accelerator.device)
 
-        self.checkpoints_folder = Path(checkpoints_folder)
-        self.results_folder = Path(results_folder)
+        # self.checkpoints_folder = Path(checkpoints_folder)
+        # self.results_folder = Path(results_folder)
 
-        self.checkpoints_folder.mkdir(exist_ok = True, parents = True)
-        self.results_folder.mkdir(exist_ok = True, parents = True)
+        # self.checkpoints_folder.mkdir(exist_ok = True, parents = True)
+        # self.results_folder.mkdir(exist_ok = True, parents = True)
 
-        self.checkpoint_every = checkpoint_every
-        self.save_results_every = save_results_every
+        # self.checkpoint_every = checkpoint_every
+        # self.save_results_every = save_results_every
 
         self.num_sample_rows = int(math.sqrt(num_samples))
         assert (self.num_sample_rows ** 2) == num_samples, f'{num_samples} must be a square'
@@ -273,10 +276,7 @@ class TrainerMAR(BaseTrainer):
     
     def run_trainer(self, data_loader, experiment_dict, directory):
 
-        dl = cycle(self.dl)
-
         best_loss = float('inf')
-        beta_recons = self.args.beta_recons
         self.model.train()
 
         for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
@@ -290,10 +290,8 @@ class TrainerMAR(BaseTrainer):
             for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):
             
 
-                loss = self.model(batch)
-
-                self.accelerator.print(f'[{i * epoch}] loss: {loss.item():.3f}')
-                self.accelerator.backward(loss)
+                loss_i = self.model(batch)
+                self.accelerator.backward(loss_i)
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -302,20 +300,33 @@ class TrainerMAR(BaseTrainer):
                     self.ema_model.update()
 
                 self.accelerator.wait_for_everyone()
+                epoch_loss += loss_i.item()
 
-            if self.is_main:
-                if divisible_by(i, self.save_results_every):
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
 
-                    with torch.no_grad():
-                        sampled = self.ema_model.sample(batch_size = self.num_samples)
-
-                    sampled.clamp_(0., 1.)
-                    save_image(sampled, str(self.results_folder / f'results.{i*epoch_kl_loss}.png'), nrow = self.num_sample_rows)
-
-                if divisible_by(i *epoch, self.checkpoint_every):
-                    self.save(f'checkpoint.{i}.pt')
-
+            # Saving Best model
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                if self.accelerator.is_main_process:
+                    print(f"New best loss: {best_loss}")
+                self.save_model(directory)
             self.accelerator.wait_for_everyone()
+
+            # if self.is_main:
+            #     if divisible_by(i, self.save_results_every):
+
+            #         with torch.no_grad():
+            #             sampled = self.ema_model.sample(batch_size = self.num_samples)
+
+            #         sampled.clamp_(0., 1.)
+            #         save_image(sampled, str(self.results_folder / f'results.{i*epoch_kl_loss}.png'), nrow = self.num_sample_rows)
+
+            #     if divisible_by(i *epoch, self.checkpoint_every):
+            #         self.save(f'checkpoint.{i}.pt')
+
+            self.accelerator.wait_for_everyone() 
 
 
         print('training complete')
