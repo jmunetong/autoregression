@@ -225,17 +225,18 @@ class TrainerVAE(BaseTrainer):
             self.accelerator.wait_for_everyone()
 
 class TrainerMAR(BaseTrainer):
-    def __init__(self, args, model, vae_model, optimizer, scheduler, accelerator, recons_loss):
+    def __init__(self, args, model, optimizer, scheduler, accelerator):
         super().__init__(args, model, optimizer, scheduler, accelerator)
         self.vae_model = model
         self._get_prediction_shape_image()
         model_dim = dict(
         dim = 1024,
         depth = 12,
-        heads = 12)
-        self.patch_size = 8
+        heads = 12) #TODO: Add experiment parameters for these values
+        self.patch_size = 8 # TODO: Add experiment parameters for this value
 
         self.model = ImageAutoregressiveDiffusion(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size)
+        self.model = self.accelerator.prepare(self.model)
 
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -302,7 +303,11 @@ class TrainerMAR(BaseTrainer):
     
         print('training complete')
 
-
+    def get_diff_model(self):
+        """
+        Returns the diffusion model.
+        """
+        return self.model
     
     @property
     def is_main(self):

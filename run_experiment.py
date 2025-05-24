@@ -70,6 +70,21 @@ def vq_config_dict(args):
     return config
 
 
+
+def generate_vae_samples(model, dataloader, directory):
+    for i, batch in enumerate(dataloader):
+        if i > 2:
+            break
+        for j in range(batch.shape[0]):
+            recons = model(batch[j].unsqueeze(0), return_dict=True).sample
+            plot_reconstruction(batch[j],recons, idx=count, directory=directory)
+            count += 1
+            del recons
+            if count > 5:
+                break
+
+            
+
 def build_experiment_metadata(args):
     metadata = {
         "model_name": args.model_name,
@@ -201,18 +216,23 @@ def run(args):
         total_params = sum(p.numel() for p in model.parameters())
         print(f'Total parameters: {total_params:,}')
         
-    # Loading weights and biases
-    # if accelerator.is_main_process:
-    #     run_logger = wandb.init(project=args.model_name, id=model_id, config=args)
     args_dict = vars(args)
     args_dict['model_id'] = model_id
     accelerator.init_trackers(
         args.model_name,
         config=args_dict
     )
+    if args.train_vae:
+        print_color("Training VAE model", "blue")
+        train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
+        train_pipeline.run_train(dataloader, experiment_dict, directory)
     
-    train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
-    train_pipeline.run_train(dataloader, experiment_dict, directory)
+    if args.diff:
+        print_color("Training Diffusion model", "blue")
+        diffusion_trainer = TrainerDiffusion(args, model, optimizer, scheduler, accelerator, recons_loss)
+        diffusion_trainer.run_train(dataloader, experiment_dict, directory)
+
+
     if accelerator.is_main_process:
         
         with open(os.path.join(directory, "config.json"), "w") as file:
@@ -223,18 +243,9 @@ def run(args):
         model.eval()
         count = 0
         torch.cuda.empty_cache()
-        for i, batch in enumerate(dataloader):
-            if i > 2:
-                break
-            for j in range(batch.shape[0]):
-                recons = model(batch[j].unsqueeze(0), return_dict=True).sample
-                plot_reconstruction(batch[j],recons, idx=count, directory=directory)
-                count += 1
-                del recons
-                if count > 5:
-                    break
+        generate_vae_samples(model, dataloader, directory)
 
-            accelerator.end_training()
+    accelerator.end_training()
     
 
 
@@ -271,6 +282,11 @@ if __name__ == '__main__':
     # Arguments for variational autoencoder.
     parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
     parser.add_argument("--annealing_shape", type=str, default="cosine", choices=["linear", "cosine", "logistic"], help="Shape of the annealing function")
+    
+    # Diffusion model arguments
+    parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
+    parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
+    
  
     args = parser.parse_args()
 
