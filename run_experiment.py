@@ -1,6 +1,6 @@
 import os
 
-from accelerate import Accelerator
+from accelerate import Accelerator, load_checkpoint_in_model
 import wandb
 import torch.distributed as dist
 import json
@@ -207,8 +207,7 @@ def run(args):
     model_config, trainer = init_configure_model(args)
     model = MODELS[args.model_name](**model_config)
     model.train()
-    # 
-
+    
     num_training_steps = len(dataloader) * args.num_epochs
     num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
@@ -235,15 +234,14 @@ def run(args):
         args.model_name,
         config=args_dict
     )
-    if args.train_vae or not args.diff:
+
+    if not args.diff or (args.diff and args.train_vae):
         print_color("Training VAE model", "blue")
         train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
         train_pipeline.run_train(dataloader, experiment_dict, directory)
     else:
-        
-        with open(os.path.join(args.pretrained_vae, "config.yaml"), "r") as fil:
-            model_config_load  = yaml.safe_load(fil)
-        
+        with open(os.path.join(args.pretrained_vae, "config.json"), "r") as f:
+            model_config_load = json.load(f)
         
         safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
    
@@ -252,7 +250,12 @@ def run(args):
                 print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
             return
         else:
-            model = MODELS[args.model_name].from_pretrained(args.pretrained_vae, config=model_config_load)
+            model = MODELS[args.model_name](**model_config_load)
+            load_checkpoint_in_model(
+                model,
+                checkpoint=safe_tensor_path,,
+                device_map = {"": "cuda" if torch.cuda.is_available() else "cpu"},
+                offload_state_dict=True)
             model = accelerator.prepare(model)
 
     if args.diff:
