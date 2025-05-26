@@ -41,6 +41,10 @@ class XrdDataset(Dataset):
     def __len__(self):
         return len(self.idx_files)
     
+    def get_image_shape(self):
+        sample = self.__getitem__(0)  # Get the shape of the first image
+        return sample.shape
+    
     def _preprocess_indeces(self):  
         self.idx_files = [(i, j) for i, file in enumerate(self.zarr_pointers) for j in range(file.shape[0])]
 

@@ -1,6 +1,6 @@
 import os
 
-from accelerate import Accelerator, load_checkpoint_in_model
+from accelerate import Accelerator, load_checkpoint_in_model, infer_auto_device_map
 import wandb
 import torch.distributed as dist
 import json
@@ -242,6 +242,7 @@ def run(args):
     else:
         with open(os.path.join(args.pretrained_vae, "config.json"), "r") as f:
             model_config_load = json.load(f)
+        accelerator.wait_for_everyone()
         
         safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
    
@@ -250,18 +251,30 @@ def run(args):
                 print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
             return
         else:
-            model = MODELS[args.model_name](**model_config_load)
-            load_checkpoint_in_model(
-                model,
-                checkpoint=safe_tensor_path,,
-                device_map = {"": "cuda" if torch.cuda.is_available() else "cpu"},
-                offload_state_dict=True)
+            model = AutoencoderKL.from_pretrained(
+                args.pretrained_vae,
+            )
+            # device_map = infer_auto_device_map(model)
+            # model = load_checkpoint_in_model(
+            #     model,
+            #     args.pretrained_vae,
+            #     device_map=device_map,
+            # )
             model = accelerator.prepare(model)
+            accelerator.wait_for_everyone()
+            # model = MODELS[args.model_name](**model_config_load)
+            # load_checkpoint_in_model(
+            #     model,
+            #     checkpoint=safe_tensor_path,
+            #     offload_state_dict=True)
+            # accelerator.wait_for_everyone()
+            # model = accelerator.prepare(model)
 
     if args.diff:
         print_color("Training Diffusion model", "blue")
         from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
-        diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, recons_loss)
+        
+        diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
 
 

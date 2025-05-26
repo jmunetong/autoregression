@@ -505,8 +505,8 @@ class ImageAutoregressiveDiffusion(Module):
 
         self.to_image = Rearrange('b (h w) (c p1 p2) -> b c (h p1) (w p2)', p1 = patch_size, p2 = patch_size, h = int(math.sqrt(num_patches)))
 
-    def sample(self, batch_size = 1):
-        tokens = self.model.sample(batch_size = batch_size)
+    def sample(self, batch_size = 1, prompt = None):
+        tokens = self.model.sample(batch_size = batch_size, prompt = prompt)
         images = self.to_image(tokens)
         return unnormalize_to_zero_to_one(images)
 
@@ -514,3 +514,12 @@ class ImageAutoregressiveDiffusion(Module):
         images = normalize_to_neg_one_to_one(images)
         tokens = self.to_tokens(images)
         return self.model(tokens)
+    
+    def sample_conditioning(self, images):
+        """
+        Sample conditioning tokens from the images.
+        This is useful for training the model with conditioning.
+        """
+        images = normalize_to_neg_one_to_one(images)
+        tokens = self.to_tokens(images)
+        
