@@ -84,12 +84,14 @@ def generate_vae_samples(model, dataloader, directory):
             if count > 5:
                 break
 
-def generate_diff_samples(model, diff_model, directory, count=4):
+def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None):
     batch = diff_model.sample(batch_size=count)
-    for j in range(count):
-        batch = diff_model.sample()
-        recons = model(batch.unsqueeze(0), return_dict=True).sample
-        plot_diff(recons, directory, idx=j)
+    print(batch.shape)
+    print(image_shape)
+    print(encoding_shape)
+    for i in range(count):
+        recons = model.decode(batch[i].unsqueeze(0), return_dict=True).sample
+        plot_diff(recons[0], directory, idx=i)
         
 def build_experiment_metadata(args):
     metadata = {
@@ -271,13 +273,14 @@ def run(args):
             # model = accelerator.prepare(model)
 
     if args.diff:
-        print_color("Training Diffusion model", "blue")
+        if accelerator.is_main_process:
+            print_color("Training Diffusion model", "blue")
         from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
         
         diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
 
-
+    accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         with open(os.path.join(directory, "config.json"), "w") as file:
             json.dump(model_config, file)
@@ -290,7 +293,8 @@ def run(args):
         if not args.diff:
             generate_vae_samples(model, dataloader, directory)
         else:
-            generate_diff_samples(model, diffusion_trainer.get_diff_model(), directory)
+            samples = 10
+            generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape)
 
     accelerator.end_training()
     

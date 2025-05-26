@@ -24,7 +24,7 @@ from torch.nn import Module
 
 
 
-TEST_LEGNTH = 3
+TEST_LEGNTH = 1
 
 class BaseTrainer():
     def __init__(self, args, model, optimizer, scheduler, accelerator,  recons_loss):
@@ -236,8 +236,16 @@ class TrainerDiffusion(BaseTrainer):
                 forward_method_names = ('sample',),
                 **ema_kwargs
             )
+            self.ema_model = self.accelerator.prepare(self.ema_model)
 
-            self.ema_model.to(self.accelerator.device)
+        # self.ema_model = EMA(
+        #     self.unwrap(self.model),
+        #     forward_method_names = ('sample',),
+        #     **ema_kwargs
+        # )
+        # self.ema_model = self.accelerator.prepare(self.ema_model)
+
+            # self.ema_model.to(self.accelerator.device)
         self.accelerator.wait_for_everyone()
 
     def _get_prediction_shape_image(self):
@@ -273,9 +281,11 @@ class TrainerDiffusion(BaseTrainer):
                 self.optimizer.zero_grad()
 
                 if self.is_main:
-                    self.ema_model.update()
-
+                    self.unwarp(self.ema_model).update()
+                # self.accelerator.wait_for_everyone()
+                # self.unwrap(self.ema_model).update()
                 self.accelerator.wait_for_everyone()
+                
                 epoch_loss += loss_i.item()
 
             if self.accelerator.is_main_process:

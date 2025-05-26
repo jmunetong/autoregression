@@ -45,9 +45,10 @@ def plot_reconstruction(original: torch.Tensor, reconstructed: torch.Tensor, idx
 def plot_diff(batch, directory, idx=0):
     
     batch = trainsform_to_image(batch)
-    if batch.ndim == 4:  # (B, C, H, W)
-        batch = np.transpose(batch, (1, 2, 0))
+
+    batch = np.transpose(batch, (1, 2, 0))
+
         
-    plt.imshow(batch, vmin=np.percentile(batch, 1), vmax=np.percentile(batch, 99))
+    plt.imshow(batch, cmap='gray', vmin=np.percentile(batch, 1), vmax=np.percentile(batch, 99))
     plt.title("Diffusion Process Reconstruction")
     plt.savefig(os.path.join(directory, f'diff_dir{idx}_.png'))
