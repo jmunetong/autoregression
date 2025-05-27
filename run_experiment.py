@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL, VQModel
 
+from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
 from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
 from train_utils.losses import IntensityWeightedMSELoss
@@ -275,9 +276,10 @@ def run(args):
     if args.diff:
         if accelerator.is_main_process:
             print_color("Training Diffusion model", "blue")
-        from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
+      
         
         diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
+        print_color(f"Diffusion model shape: {diffusion_trainer.encoding_shape}", "blue")
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
 
     accelerator.wait_for_everyone()

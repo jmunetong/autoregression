@@ -236,7 +236,8 @@ class TrainerDiffusion(BaseTrainer):
                 forward_method_names = ('sample',),
                 **ema_kwargs
             )
-            self.ema_model = self.accelerator.prepare(self.ema_model)
+            # self.ema_model = self.accelerator.prepare(self.ema_model)
+            self.ema_model.to(self.accelerator.device)
 
         # self.ema_model = EMA(
         #     self.unwrap(self.model),
@@ -271,7 +272,9 @@ class TrainerDiffusion(BaseTrainer):
             epoch_loss = 0.0
             for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
                 # Decoding step
-                loss_i = self.model(self.model_vae.encode(batch).latent_dist.sample())
+                self.model.train()
+                latents = self.model_vae.encode(batch).latent_dist.sample().detach().requires_grad_()
+                loss_i = self.model(latents)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     self._save_experiment_config(experiment_dict, directory)
                    
@@ -281,7 +284,7 @@ class TrainerDiffusion(BaseTrainer):
                 self.optimizer.zero_grad()
 
                 if self.is_main:
-                    self.unwarp(self.ema_model).update()
+                    self.unwrap(self.ema_model).update()
                 # self.accelerator.wait_for_everyone()
                 # self.unwrap(self.ema_model).update()
                 self.accelerator.wait_for_everyone()
