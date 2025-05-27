@@ -85,14 +85,14 @@ def generate_vae_samples(model, dataloader, directory):
             if count > 5:
                 break
 
-def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None):
+def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1):
     batch = diff_model.sample(batch_size=count)
     print(batch.shape)
     print(image_shape)
     print(encoding_shape)
     for i in range(count):
         recons = model.decode(batch[i].unsqueeze(0), return_dict=True).sample
-        plot_diff(recons[0], directory, idx=i)
+        plot_diff(recons[0], directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
         
 def build_experiment_metadata(args):
     metadata = {
@@ -296,7 +296,9 @@ def run(args):
             generate_vae_samples(model, dataloader, directory)
         else:
             samples = 10
-            generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape)
+            min_pixel, max_pixel = dataset.get_min_max()
+            generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel)
+            generate_vae_samples(diffusion_trainer.unwrap(model), dataloader, directory)
 
     accelerator.end_training()
     

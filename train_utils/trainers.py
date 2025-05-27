@@ -330,3 +330,120 @@ class TrainerDiffusion(BaseTrainer):
 
 
         
+
+class TrainerDiffusionNonVAE(BaseTrainer):
+    def __init__(self, args, model,diff_model, optimizer, scheduler, accelerator,image_shape):
+        super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss=None)
+        self.model_vae = self.unwrap(model)
+        model_dim = dict(
+        dim = 512,
+        depth = 3,
+        heads = 1) #TODO: Add experiment parameters for these values
+        self.patch_size = 8 # TODO: Add experiment parameters for this value
+        self.image_shape = (1, *image_shape)
+        self.encoding_shape = None
+        self._get_prediction_shape_image()
+        self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.encoding_shape[-1], patch_size = self.patch_size))
+        
+        ema_kwargs = dict() # TODO: Fix this line of code
+
+        if self.is_main:
+            self.ema_model = EMA(
+                self.unwrap(self.model),
+                forward_method_names = ('sample',),
+                **ema_kwargs
+            )
+            # self.ema_model = self.accelerator.prepare(self.ema_model)
+            self.ema_model.to(self.accelerator.device)
+
+        # self.ema_model = EMA(
+        #     self.unwrap(self.model),
+        #     forward_method_names = ('sample',),
+        #     **ema_kwargs
+        # )
+        # self.ema_model = self.accelerator.prepare(self.ema_model)
+
+            # self.ema_model.to(self.accelerator.device)
+        self.accelerator.wait_for_everyone()
+
+    def _get_prediction_shape_image(self):
+        sample = torch.randn(self.image_shape).to(self.accelerator.device)
+        self.model_vae.eval()
+        with torch.no_grad():
+            out = self.model_vae.encode(sample).latent_dist.sample()
+        self.encoding_shape = out.shape[1:]
+    
+    @staticmethod
+    def unwrap(model):
+        return model.module if hasattr(model, "module") else model
+    
+    def run_train(self, data_loader, experiment_dict, directory):
+
+        best_loss = float('inf')
+        self.model_vae.eval()
+        self.model.train()
+
+        for epoch in range(self.args.diff_epochs if not self.args.test_pipeline else TEST_LEGNTH):
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
+            epoch_loss = 0.0
+            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
+                # Decoding step
+                self.model.train()
+                latents = self.model_vae.encode(batch).latent_dist.sample().detach().requires_grad_()
+                loss_i = self.model(latents)
+                if i == 0 and epoch == 0 and self.accelerator.is_main_process:
+                    self._save_experiment_config(experiment_dict, directory)
+                   
+                self.accelerator.backward(loss_i)
+
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                if self.is_main:
+                    self.unwrap(self.ema_model).update()
+                # self.accelerator.wait_for_everyone()
+                # self.unwrap(self.ema_model).update()
+                self.accelerator.wait_for_everyone()
+                
+                epoch_loss += loss_i.item()
+
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
+
+            # Saving Best model
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                if self.accelerator.is_main_process:
+                    print(f"New best loss: {best_loss}")
+                self.save(directory)
+
+            self.accelerator.wait_for_everyone()
+    
+        print('training complete')
+
+    def get_diff_model(self):
+        """
+        Returns the diffusion model.
+        """
+        return self.unwrap(self.model)
+    
+    @property
+    def is_main(self):
+        return self.accelerator.is_main_process
+
+    def save(self, path):
+        if not self.is_main:
+            return
+
+        save_package = dict(
+            model = self.accelerator.unwrap_model(self.model).state_dict(),
+            ema_model = self.ema_model.state_dict(),
+            optimizer = self.accelerator.unwrap_model(self.optimizer).state_dict(),
+        )
+
+        torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
+
+
+        

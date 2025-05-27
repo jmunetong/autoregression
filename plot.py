@@ -42,13 +42,19 @@ def plot_reconstruction(original: torch.Tensor, reconstructed: torch.Tensor, idx
     plt.show()
     plt.savefig(os.path.join(directory, f'dir{idx}_.png'))
 
-def plot_diff(batch, directory, idx=0):
+def plot_diff(batch, directory, idx=0, min_pixel=None, max_pixel=None):
     
     batch = trainsform_to_image(batch)
 
     batch = np.transpose(batch, (1, 2, 0))
+    if min_pixel is None:
+        min_pixel = np.percentile(batch, 1)
+    if max_pixel is None:
+        max_pixel = np.percentile(batch, 99)
 
-        
-    plt.imshow(batch, cmap='gray', vmin=np.percentile(batch, 1), vmax=np.percentile(batch, 99))
+    plt.imshow(batch, vmin=min_pixel, vmax = max_pixel, cmap='viridis' if batch.shape[-1] == 1 else None)
+    plt.axis("off")
+    plt.tight_layout()
     plt.title("Diffusion Process Reconstruction")
     plt.savefig(os.path.join(directory, f'diff_dir{idx}_.png'))
+    plt.close()
