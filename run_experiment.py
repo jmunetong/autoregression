@@ -324,6 +324,7 @@ if __name__ == '__main__':
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
     parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
+    parser.add_argument("--alpha_mse", type=float, default=2.0, help="Alpha value for Intensity Weighted MSE Loss")
 
     # Pipeline parameters
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")

@@ -407,11 +407,11 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 self.accelerator.wait_for_everyone()
                 
                 epoch_loss += loss_i.item()
-
+            epoch_loss /= len(data_loader)
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
-
+        
             # Saving Best model
             if epoch_loss < best_loss:
                 best_loss = epoch_loss

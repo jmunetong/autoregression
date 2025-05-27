@@ -1,11 +1,11 @@
 #!/bin/bash
 TEST_FLAG=$1
 LATENT_CHANNELS=3
-NUM_EPOCHS=5
+NUM_EPOCHS=10
 B_VAE=2
 KL_MODEL="vae_kl"
 VQ_MODEL="vq"
-LOSSES=("mse" "l1" "iwmse")
+LOSSES=("iwmse" "mse" "l1")
 DATASETS=(522 422)
 
 
