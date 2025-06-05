@@ -180,3 +180,11 @@ cython_debug/
 
 data/*
 testing.ipynb
+peaknet10k/
+/peaknet10k
+vae_model/
+*.zip
+experiments/*
+experiments.zip
+load_model.py
+test_images/

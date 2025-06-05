@@ -19,3 +19,4 @@ data/mfxl1027522_r0030_peaknet.0075.zarr/images
 ### Requesting a gpu
 
 srun -p gpu-pascal --gres=gpu:1 --pty bash
+srun -p gpu-turing --gres=gpu:4 --pty bash
