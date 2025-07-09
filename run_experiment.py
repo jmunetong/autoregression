@@ -1,4 +1,5 @@
 import os
+from argparse import ArgumentParser
 
 from accelerate import Accelerator, load_checkpoint_in_model, infer_auto_device_map
 import wandb
@@ -12,13 +13,15 @@ from torch.utils.data import DataLoader
 
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL, VQModel
+from icecream import ic
 
 from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
 from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
 from train_utils.losses import IntensityWeightedMSELoss
-from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion
+from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion, TrainerDiffusionNonVAE
 from plot import plot_reconstruction, plot_diff
+
 
 accelerator = Accelerator(log_with="wandb")
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
@@ -70,6 +73,50 @@ def vq_config_dict(args):
     }   
     return config
 
+
+def get_args():
+    parser = ArgumentParser()
+
+    os.makedirs("results", exist_ok=True)
+    # Model Name
+    parser.add_argument("--model_name", "-m", type=str, default="vae_kl", help="Name of model")
+    parser.add_argument("--latent_channels", type=int, default=2, help="Number of latent channels")
+
+    # Data parameters
+    parser.add_argument("--data_id", type=int, default=522, choices=[422, 522], help="Experiment number")
+    parser.add_argument("--avg_pooling", action='store_true', help="Apply average pooling to the images")
+    parser.add_argument("--topk", type=float, default=1.0, help="Top k percent of images to use for training")
+
+    # Training parameters
+    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
+    parser.add_argument("--lr", type=float, default=1e-5, help="learning rate training model")
+    parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
+    parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
+    parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
+    parser.add_argument("--alpha_mse", type=float, default=2.0, help="Alpha value for Intensity Weighted MSE Loss")
+
+    # Pipeline parameters
+    parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
+    parser.add_argument("--batch_size", "-b", type=int, default=3, help="Batch size for training")
+    parser.add_argument(
+        "--test_pipeline", "-t",
+        action="store_true",
+        help="Enable test pipeline (default: False)"
+    )
+
+    # Arguments for variational autoencoder.
+    parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
+    parser.add_argument("--annealing_shape", type=str, default="cosine", choices=["linear", "cosine", "logistic"], help="Shape of the annealing function")
+    
+    # Diffusion model arguments
+    parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
+    parser.add_argument("--use_vae", action='store_true', help="Use VAE model for diffusion training")
+    parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
+    parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
+    parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
+    
+    args = parser.parse_args()
+    return args
 
 
 def generate_vae_samples(model, dataloader, directory):
@@ -191,10 +238,14 @@ def update_args(args, state_dict):
 
 def run(args):   
     # Create a shared variable to store the values
+
+    # Make sure that args.diff and args.prettrained_vae are usually used so that VAE does not need to be trained from scratch. 
     if args.diff and args.pretrained_vae:
         with open(os.path.join(args.pretrained_vae, "experiment_config.yml"), "r") as file:
             state_dict = yaml.safe_load(file)
         update_args(args,state_dict )
+
+    # information for saving model-experiment characteristics.
     md_name = args.model_name if not args.diff else f"diff_{args.model_name}"
     model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
     torch.cuda.empty_cache()
@@ -204,6 +255,7 @@ def run(args):
 
     # Dataset and Dataloader
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
+    
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
 
     # Model Instantiation
@@ -211,6 +263,7 @@ def run(args):
     model = MODELS[args.model_name](**model_config)
     model.train()
     
+    # Configuring Optimizer steps
     num_training_steps = len(dataloader) * args.num_epochs
     num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
@@ -227,6 +280,7 @@ def run(args):
     model = model.module if hasattr(model, "module") else model
     recons_loss = RECONS_LOSS[args.recons_loss]
 
+
     if accelerator.is_main_process:
         total_params = sum(p.numel() for p in model.parameters())
         print(f'Total parameters: {total_params:,}')
@@ -237,12 +291,12 @@ def run(args):
         args.model_name,
         config=args_dict
     )
-
+    
     if not args.diff or (args.diff and args.train_vae):
         print_color("Training VAE model", "blue")
         train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
         train_pipeline.run_train(dataloader, experiment_dict, directory)
-    else:
+    elif args.use_vae:
         with open(os.path.join(args.pretrained_vae, "config.json"), "r") as f:
             model_config_load = json.load(f)
         accelerator.wait_for_everyone()
@@ -272,13 +326,17 @@ def run(args):
             #     offload_state_dict=True)
             # accelerator.wait_for_everyone()
             # model = accelerator.prepare(model)
-
+    else:
+        pass
     if args.diff:
         if accelerator.is_main_process:
             print_color("Training Diffusion model", "blue")
       
-        
-        diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
+        if args.use_vae:
+            diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
+        else:
+            print_color("Training Diffusion model without VAE", "blue")
+            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
         print_color(f"Diffusion model shape: {diffusion_trainer.encoding_shape}", "blue")
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
 
@@ -304,48 +362,11 @@ def run(args):
     
 
 
+
+
+
 if __name__ == '__main__':
-    from argparse import ArgumentParser
-    parser = ArgumentParser()
-
-    os.makedirs("results", exist_ok=True)
-    # Model Name
-    parser.add_argument("--model_name", "-m", type=str, default="vae_kl", help="Name of model")
-    parser.add_argument("--latent_channels", type=int, default=2, help="Number of latent channels")
-
-    # Data parameters
-    parser.add_argument("--data_id", type=int, default=522, choices=[422, 522], help="Experiment number")
-    parser.add_argument("--avg_pooling", type=bool, default=False, help="Apply average pooling to the images")
-    parser.add_argument("--topk", type=float, default=1.0, help="Top k percent of images to use for training")
-
-    # Training parameters
-    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
-    parser.add_argument("--lr", type=float, default=1e-5, help="learning rate training model")
-    parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
-    parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
-    parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
-    parser.add_argument("--alpha_mse", type=float, default=2.0, help="Alpha value for Intensity Weighted MSE Loss")
-
-    # Pipeline parameters
-    parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
-    parser.add_argument("--batch_size", "-b", type=int, default=3, help="Batch size for training")
-    parser.add_argument(
-        "--test_pipeline", "-t",
-        action="store_true",
-        help="Enable test pipeline (default: False)"
-    )
-
-    # Arguments for variational autoencoder.
-    parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
-    parser.add_argument("--annealing_shape", type=str, default="cosine", choices=["linear", "cosine", "logistic"], help="Shape of the annealing function")
-    
-    # Diffusion model arguments
-    parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
-    parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
-    parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
-    parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
-    
-    args = parser.parse_args()
+    args = get_args()
     run(args)
     # try:
         

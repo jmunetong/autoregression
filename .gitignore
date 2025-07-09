@@ -188,3 +188,5 @@ experiments/*
 experiments.zip
 load_model.py
 test_images/
+experiment_backup/
+sample/

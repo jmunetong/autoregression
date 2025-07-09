@@ -12,6 +12,7 @@ from pathlib import Path
 
 from accelerate import Accelerator
 from ema_pytorch import EMA
+from icecream import ic
 
 import torch
 from torch import nn
@@ -214,6 +215,8 @@ class TrainerVAE(BaseTrainer):
                 self.save_model(directory)
             self.accelerator.wait_for_everyone()
 
+
+
 class TrainerDiffusion(BaseTrainer):
     def __init__(self, args, model,diff_model, optimizer, scheduler, accelerator,image_shape):
         super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss=None)
@@ -222,8 +225,9 @@ class TrainerDiffusion(BaseTrainer):
         dim = 1024,
         depth = 12,
         heads = 12) #TODO: Add experiment parameters for these values
-        self.patch_size = 8 # TODO: Add experiment parameters for this value
+        self.patch_size = 16 # TODO: Add experiment parameters for this value
         self.image_shape = (1, *image_shape)
+      
         self.encoding_shape = None
         self._get_prediction_shape_image()
         self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.encoding_shape[-1], patch_size = self.patch_size))
@@ -255,6 +259,7 @@ class TrainerDiffusion(BaseTrainer):
         with torch.no_grad():
             out = self.model_vae.encode(sample).latent_dist.sample()
         self.encoding_shape = out.shape[1:]
+
     
     @staticmethod
     def unwrap(model):
@@ -263,7 +268,8 @@ class TrainerDiffusion(BaseTrainer):
     def run_train(self, data_loader, experiment_dict, directory):
 
         best_loss = float('inf')
-        self.model_vae.eval()
+        # self.model_vae.eval()
+        self.model_vae.train()
         self.model.train()
 
         for epoch in range(self.args.diff_epochs if not self.args.test_pipeline else TEST_LEGNTH):
@@ -273,7 +279,9 @@ class TrainerDiffusion(BaseTrainer):
             for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
                 # Decoding step
                 self.model.train()
-                latents = self.model_vae.encode(batch).latent_dist.sample().detach().requires_grad_()
+                latents = self.model_vae.encode(batch).latent_dist.sample()
+                # 
+                # detach().requires_grad_()
                 loss_i = self.model(latents)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     self._save_experiment_config(experiment_dict, directory)
@@ -329,21 +337,23 @@ class TrainerDiffusion(BaseTrainer):
         torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
 
 
-        
-
+    
 class TrainerDiffusionNonVAE(BaseTrainer):
-    def __init__(self, args, model,diff_model, optimizer, scheduler, accelerator,image_shape):
-        super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss=None)
-        self.model_vae = self.unwrap(model)
+    def __init__(self, args, diff_model, optimizer, scheduler, accelerator,image_shape):
+        super().__init__(args, diff_model, optimizer, scheduler, accelerator, recons_loss=None)
+        # self.model_vae = self.unwrap(model) This part is not needed for the experiment given that we will be running without pre-trained VAE
         model_dim = dict(
-        dim = 512,
+        dim = 552,
         depth = 3,
         heads = 1) #TODO: Add experiment parameters for these values
         self.patch_size = 8 # TODO: Add experiment parameters for this value
         self.image_shape = (1, *image_shape)
         self.encoding_shape = None
-        self._get_prediction_shape_image()
-        self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.encoding_shape[-1], patch_size = self.patch_size))
+        ic(self.image_shape)
+     
+        self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size))
+        
+
         
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -355,23 +365,10 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             )
             # self.ema_model = self.accelerator.prepare(self.ema_model)
             self.ema_model.to(self.accelerator.device)
-
-        # self.ema_model = EMA(
-        #     self.unwrap(self.model),
-        #     forward_method_names = ('sample',),
-        #     **ema_kwargs
-        # )
-        # self.ema_model = self.accelerator.prepare(self.ema_model)
-
-            # self.ema_model.to(self.accelerator.device)
+            
         self.accelerator.wait_for_everyone()
 
-    def _get_prediction_shape_image(self):
-        sample = torch.randn(self.image_shape).to(self.accelerator.device)
-        self.model_vae.eval()
-        with torch.no_grad():
-            out = self.model_vae.encode(sample).latent_dist.sample()
-        self.encoding_shape = out.shape[1:]
+
     
     @staticmethod
     def unwrap(model):
@@ -380,7 +377,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     def run_train(self, data_loader, experiment_dict, directory):
 
         best_loss = float('inf')
-        self.model_vae.eval()
+
         self.model.train()
 
         for epoch in range(self.args.diff_epochs if not self.args.test_pipeline else TEST_LEGNTH):
@@ -390,11 +387,13 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
                 # Decoding step
                 self.model.train()
-                latents = self.model_vae.encode(batch).latent_dist.sample().detach().requires_grad_()
-                loss_i = self.model(latents)
+                # latents = self.model_vae.encode(batch).latent_dist.sample().detach().requires_grad_()
+                from icecream import ic
+                assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
+                loss_i = self.model(batch)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     self._save_experiment_config(experiment_dict, directory)
-                   
+                
                 self.accelerator.backward(loss_i)
 
                 self.optimizer.step()
