@@ -164,16 +164,16 @@ class ElucidatedDiffusion(Module):
         dim: int,
         net: MLP,
         *,
-        num_sample_steps = 2, # number of sampling steps
+        num_sample_steps = 32, # number of sampling steps
         sigma_min = 0.002,     # min noise level
-        sigma_max = 1.2,        # max noise level
+        sigma_max = 80,        # max noise level
         sigma_data = 0.5,      # standard deviation of data distribution
-        rho = 4,               # controls the sampling schedule
-        P_mean = -0.5,         # mean of log-normal distribution from which noise is drawn for training
-        P_std = 0.5,           # standard deviation of log-normal distribution from which noise is drawn for training
-        S_churn = 2,          # parameters for stochastic sampling - depends on dataset, Table 5 in apper
+        rho = 7,               # controls the sampling schedule
+        P_mean = -1.2,         # mean of log-normal distribution from which noise is drawn for training
+        P_std = 1.2,           # standard deviation of log-normal distribution from which noise is drawn for training
+        S_churn = 80,          # parameters for stochastic sampling - depends on dataset, Table 5 in apper
         S_tmin = 0.05,
-        S_tmax = 10,
+        S_tmax = 50,
         S_noise = 1.003,
         clamp_during_sampling = True
     ):
@@ -442,7 +442,6 @@ class AutoregressiveDiffusion(Module):
         seq
     ):
         b, seq_len, dim = seq.shape
-
         assert dim == self.dim_input
         assert seq_len == self.max_seq_len
 
@@ -505,8 +504,8 @@ class ImageAutoregressiveDiffusion(Module):
 
         self.to_image = Rearrange('b (h w) (c p1 p2) -> b c (h p1) (w p2)', p1 = patch_size, p2 = patch_size, h = int(math.sqrt(num_patches)))
 
-    def sample(self, batch_size = 1, prompt = None):
-        tokens = self.model.sample(batch_size = batch_size, prompt = prompt)
+    def sample(self, batch_size = 1):
+        tokens = self.model.sample(batch_size = batch_size)
         images = self.to_image(tokens)
         return unnormalize_to_zero_to_one(images)
 
@@ -514,12 +513,3 @@ class ImageAutoregressiveDiffusion(Module):
         images = normalize_to_neg_one_to_one(images)
         tokens = self.to_tokens(images)
         return self.model(tokens)
-    
-    def sample_conditioning(self, images):
-        """
-        Sample conditioning tokens from the images.
-        This is useful for training the model with conditioning.
-        """
-        images = normalize_to_neg_one_to_one(images)
-        tokens = self.to_tokens(images)
-        

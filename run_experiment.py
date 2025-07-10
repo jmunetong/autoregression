@@ -355,7 +355,12 @@ def run(args):
         else:
             samples = 10
             min_pixel, max_pixel = dataset.get_min_max()
+            #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
             generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel)
+
+            if args.use_vae:
+                print_color("Generating samples with VAE", "blue")
+                generate_vae_samples(model, dataloader, directory)
             generate_vae_samples(diffusion_trainer.unwrap(model), dataloader, directory)
 
     accelerator.end_training()

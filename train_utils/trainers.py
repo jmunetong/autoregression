@@ -347,13 +347,11 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         depth = 3,
         heads = 1) #TODO: Add experiment parameters for these values
         self.patch_size = 8 # TODO: Add experiment parameters for this value
-        self.image_shape = (1, *image_shape)
-        self.encoding_shape = None
+        self.image_shape = image_shape
+        self.encoding_shape = image_shape
         ic(self.image_shape)
      
-        self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.image_shape[-1], patch_size = self.patch_size))
-        
-
+        self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.image_shape[-1], channels=self.image_shape[-3], patch_size = self.patch_size))
         
         ema_kwargs = dict() # TODO: Fix this line of code
 
