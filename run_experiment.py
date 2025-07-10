@@ -132,15 +132,20 @@ def generate_vae_samples(model, dataloader, directory):
             if count > 5:
                 break
 
-def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1):
+def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
     batch = diff_model.sample(batch_size=count)
-    print(batch.shape)
-    print(image_shape)
-    print(encoding_shape)
+    plot_fn = plot_output_vae if use_vae else plot_non_vae
+    plot_fn(model, batch, count, directory, min_pixel, max_pixel)
+
+def plot_non_vae(model, batch, count, directory, min_pixel, max_pixel):
     for i in range(count):
-        recons = model.decode(batch[i].unsqueeze(0), return_dict=True).sample
-        plot_diff(recons[0], directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
-        
+        plot_diff(batch[i], directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
+
+def plot_output_vae(model, batch, count, directory, min_pixel, max_pixel):
+    for i in range(count):
+        out = model.decode(batch[i].unsqueeze(0), return_dict=True).sample
+        plot_diff(out[0], directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
+
 def build_experiment_metadata(args):
     metadata = {
         "model_name": args.model_name,
@@ -365,9 +370,6 @@ def run(args):
 
     accelerator.end_training()
     
-
-
-
 
 
 if __name__ == '__main__':

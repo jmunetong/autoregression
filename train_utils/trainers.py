@@ -386,7 +386,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 # Decoding step
                 self.model.train()
                 # latents = self.model_vae.encode(batch).latent_dist.sample().detach().requires_grad_()
-                from icecream import ic
                 assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
                 loss_i = self.model(batch)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
