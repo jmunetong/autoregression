@@ -5,23 +5,14 @@ import torch
 from tqdm import tqdm
 from .annealing import Annealer
 
-from typing import List
 
-import math
-from pathlib import Path
-
-from accelerate import Accelerator
 from ema_pytorch import EMA
 from icecream import ic
 
 import torch
-from torch import nn
-from torch.optim import Adam
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
 
-from torchvision.utils import save_image
-from torch.nn import Module
+from torch.optim import AdamW
+
 
 
 
@@ -218,8 +209,8 @@ class TrainerVAE(BaseTrainer):
 
 
 class TrainerDiffusion(BaseTrainer):
-    def __init__(self, args, model,diff_model, optimizer, scheduler, accelerator,image_shape):
-        super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss=None)
+    def __init__(self, args, model,diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4):
+        super().__init__(args, model, None, scheduler, accelerator, recons_loss=None)
         self.model_vae = self.unwrap(model)
         model_dim = dict(
         dim = 1024,
@@ -227,10 +218,13 @@ class TrainerDiffusion(BaseTrainer):
         heads = 12) #TODO: Add experiment parameters for these values
         self.patch_size = 16 # TODO: Add experiment parameters for this value
         self.image_shape = (1, *image_shape)
-      
-        self.encoding_shape = None
+        
         self._get_prediction_shape_image()
-        self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.encoding_shape[-1], patch_size = self.patch_size))
+        self.model = diff_model(model=model_dim, image_size = self.encoding_shape[-1], patch_size = self.patch_size)
+        self.optimizer = AdamW(model.parameters(), lr = learning_rate)
+        self.encoding_shape = None
+        
+        self.model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
         
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -339,19 +333,22 @@ class TrainerDiffusion(BaseTrainer):
 
     
 class TrainerDiffusionNonVAE(BaseTrainer):
-    def __init__(self, args, diff_model, optimizer, scheduler, accelerator,image_shape):
-        super().__init__(args, diff_model, optimizer, scheduler, accelerator, recons_loss=None)
+    def __init__(self, args, diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4):
+        super().__init__(args, diff_model, None, scheduler, accelerator, recons_loss=None)
         # self.model_vae = self.unwrap(model) This part is not needed for the experiment given that we will be running without pre-trained VAE
-        model_dim = dict(
-        dim = 552,
-        depth = 3,
-        heads = 1) #TODO: Add experiment parameters for these values
+      #TODO: Add experiment parameters for these values
         self.patch_size = 8 # TODO: Add experiment parameters for this value
         self.image_shape = image_shape
+       
+        model_dim = dict(
+        dim = 512,
+        depth = 8,
+        heads = 3)
+        # self._get_prediction_shape_image()
+        self.model = diff_model(model=model_dim, image_size=self.image_shape[-1], patch_size=self.patch_size)
+        self.optimizer = AdamW(self.model.parameters(), lr=learning_rate)
+        self.model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
         self.encoding_shape = image_shape
-        ic(self.image_shape)
-     
-        self.model = self.accelerator.prepare(diff_model(model=model_dim, image_size = self.image_shape[-1], channels=self.image_shape[-3], patch_size = self.patch_size))
         
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -383,9 +380,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
             epoch_loss = 0.0
             for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
-                # Decoding step
-                self.model.train()
-                # latents = self.model_vae.encode(batch).latent_dist.sample().detach().requires_grad_()
+                self.optimizer.zero_grad()
                 assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
                 loss_i = self.model(batch)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
@@ -394,8 +389,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 self.accelerator.backward(loss_i)
 
                 self.optimizer.step()
-                self.optimizer.zero_grad()
-
+                
                 if self.is_main:
                     self.unwrap(self.ema_model).update()
                 # self.accelerator.wait_for_everyone()

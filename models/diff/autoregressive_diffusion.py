@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from icecream import ic
 import math
 from math import sqrt
 from typing import Literal
@@ -355,7 +355,7 @@ class AutoregressiveDiffusion(Module):
         *,
         max_seq_len,
         depth = 8,
-        dim_head = 64,
+        dim_head = 512,
         heads = 8,
         mlp_depth = 3,
         mlp_width = None,
@@ -371,6 +371,7 @@ class AutoregressiveDiffusion(Module):
         self.start_token = nn.Parameter(torch.zeros(dim))
         self.max_seq_len = max_seq_len
         self.abs_pos_emb = nn.Embedding(max_seq_len, dim)
+
 
         dim_input = default(dim_input, dim)
         self.dim_input = dim_input
@@ -442,6 +443,8 @@ class AutoregressiveDiffusion(Module):
         seq
     ):
         b, seq_len, dim = seq.shape
+        # import sys;
+        # sys.exit(1)
         assert dim == self.dim_input
         assert seq_len == self.max_seq_len
 
@@ -487,18 +490,19 @@ class ImageAutoregressiveDiffusion(Module):
     ):
         super().__init__()
         assert divisible_by(image_size, patch_size)
-
+        from icecream import ic
         num_patches = (image_size // patch_size) ** 2
         dim_in = channels * patch_size ** 2
+       
 
         self.image_size = image_size
         self.patch_size = patch_size
 
         self.to_tokens = Rearrange('b c (h p1) (w p2) -> b (h w) (c p1 p2)', p1 = patch_size, p2 = patch_size)
-
+    
         self.model = AutoregressiveDiffusion(
             **model,
-            dim_input = dim_in,
+            dim_input = 64,
             max_seq_len = num_patches
         )
 

@@ -119,6 +119,9 @@ def get_args():
     return args
 
 
+def diff_name_config(use_vae):
+    return f"diff_{args.model_name}" if use_vae else f"diff_non_vae_{args.model_name}"
+
 def generate_vae_samples(model, dataloader, directory):
     count = 0
     for i, batch in enumerate(dataloader):
@@ -251,7 +254,7 @@ def run(args):
         update_args(args,state_dict )
 
     # information for saving model-experiment characteristics.
-    md_name = args.model_name if not args.diff else f"diff_{args.model_name}"
+    md_name = args.model_name if not args.diff else diff_name_config(args.use_vae)
     model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
     torch.cuda.empty_cache()
 
@@ -338,11 +341,14 @@ def run(args):
             print_color("Training Diffusion model", "blue")
       
         if args.use_vae:
-            diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
+            diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr)
         else:
             print_color("Training Diffusion model without VAE", "blue")
-            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, optimizer, scheduler, accelerator, image_shape = dataset.get_image_shape())
-        print_color(f"Diffusion model shape: {diffusion_trainer.encoding_shape}", "blue")
+            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(), learning_rate=args.lr)
+        if accelerator.is_main_process:
+
+            print_color(f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")
+       
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
 
     accelerator.wait_for_everyone()
@@ -361,7 +367,7 @@ def run(args):
             samples = 10
             min_pixel, max_pixel = dataset.get_min_max()
             #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
-            generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel)
+            generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel, args.use_vae)
 
             if args.use_vae:
                 print_color("Generating samples with VAE", "blue")

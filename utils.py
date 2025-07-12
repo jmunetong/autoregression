@@ -56,7 +56,6 @@ def files_to_img(z_arrays, sample_id = None, verbose=False):
     return images
 
 
-
 def get_directories(path, sub_dir="images"):
     """"""
     directories  = [os.path.join(path,d, sub_dir) for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
