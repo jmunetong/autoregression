@@ -89,7 +89,7 @@ def get_args():
 
     # Training parameters
     parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
-    parser.add_argument("--lr", type=float, default=1e-5, help="learning rate training model")
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate training model")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
     parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
     parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
@@ -344,7 +344,7 @@ def run(args):
             diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr)
         else:
             print_color("Training Diffusion model without VAE", "blue")
-            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(), learning_rate=args.lr)
+            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(), learning_rate=args.lr, len_train_data_loader=len(dataloader), num_epochs=args.diff_epochs)
         if accelerator.is_main_process:
 
             print_color(f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")

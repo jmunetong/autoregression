@@ -164,14 +164,14 @@ class ElucidatedDiffusion(Module):
         dim: int,
         net: MLP,
         *,
-        num_sample_steps = 32, # number of sampling steps
+        num_sample_steps = 64, # number of sampling steps
         sigma_min = 0.002,     # min noise level
-        sigma_max = 80,        # max noise level
+        sigma_max = 20,        # max noise level
         sigma_data = 0.5,      # standard deviation of data distribution
         rho = 7,               # controls the sampling schedule
         P_mean = -1.2,         # mean of log-normal distribution from which noise is drawn for training
-        P_std = 1.2,           # standard deviation of log-normal distribution from which noise is drawn for training
-        S_churn = 80,          # parameters for stochastic sampling - depends on dataset, Table 5 in apper
+        P_std = 0.8,           # standard deviation of log-normal distribution from which noise is drawn for training
+        S_churn = 5,          # parameters for stochastic sampling - depends on dataset, Table 5 in apper
         S_tmin = 0.05,
         S_tmax = 50,
         S_noise = 1.003,
@@ -355,7 +355,7 @@ class AutoregressiveDiffusion(Module):
         *,
         max_seq_len,
         depth = 8,
-        dim_head = 512,
+        dim_head = 1024,
         heads = 8,
         mlp_depth = 3,
         mlp_width = None,
@@ -485,16 +485,13 @@ class ImageAutoregressiveDiffusion(Module):
         *,
         image_size,
         patch_size,
-        channels = 3,
+        channels = 1,
         model: dict = dict(),
     ):
         super().__init__()
         assert divisible_by(image_size, patch_size)
-        from icecream import ic
         num_patches = (image_size // patch_size) ** 2
         dim_in = channels * patch_size ** 2
-       
-
         self.image_size = image_size
         self.patch_size = patch_size
 
@@ -502,7 +499,7 @@ class ImageAutoregressiveDiffusion(Module):
     
         self.model = AutoregressiveDiffusion(
             **model,
-            dim_input = 64,
+            dim_input = dim_in,
             max_seq_len = num_patches
         )
 
