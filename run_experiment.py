@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim
 from torch.utils.data import DataLoader
+import numpy as np
 
 from transformers import get_cosine_schedule_with_warmup
 from diffusers import AutoencoderKL, VQModel
@@ -20,7 +21,7 @@ from utils import get_device, create_directory, print_color
 from data_preprocessing import XrdDataset
 from train_utils.losses import IntensityWeightedMSELoss
 from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion, TrainerDiffusionNonVAE
-from plot import plot_reconstruction, plot_diff
+from plot import plot_reconstruction, plot_diff, transform_to_image
 
 
 accelerator = Accelerator(log_with="wandb")
@@ -142,11 +143,15 @@ def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=
 
 def plot_non_vae(model, batch, count, directory, min_pixel, max_pixel):
     for i in range(count):
+        min_pixel = np.percentile(transform_to_image(batch[i]), 1)
+        max_pixel = np.percentile(transform_to_image(batch[i]), 99)
         plot_diff(batch[i], directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
 
 def plot_output_vae(model, batch, count, directory, min_pixel, max_pixel):
     for i in range(count):
         out = model.decode(batch[i].unsqueeze(0), return_dict=True).sample
+        min_pixel = np.percentile(transform_to_image(out), 1)
+        max_pixel = np.percentile(transform_to_image(out), 99)
         plot_diff(out[0], directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
 
 def build_experiment_metadata(args):

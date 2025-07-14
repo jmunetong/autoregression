@@ -166,7 +166,7 @@ class ElucidatedDiffusion(Module):
         *,
         num_sample_steps = 64, # number of sampling steps
         sigma_min = 0.002,     # min noise level
-        sigma_max = 20,        # max noise level
+        sigma_max = 10,        # max noise level
         sigma_data = 0.5,      # standard deviation of data distribution
         rho = 7,               # controls the sampling schedule
         P_mean = -1.2,         # mean of log-normal distribution from which noise is drawn for training
@@ -339,9 +339,23 @@ class ElucidatedDiffusion(Module):
 
         denoised = self.preconditioned_network_forward(noised_seq, sigmas, cond = cond)
 
-        losses = F.mse_loss(denoised, seq, reduction = 'none')
-        losses = reduce(losses, 'b ... -> b', 'mean')
+        # losses = F.mse_loss(denoised, seq, reduction = 'none')
+        # losses = reduce(losses, 'b ... -> b', 'mean')
 
+        # losses = losses * self.loss_weight(sigmas)
+
+        # return losses.mean()
+        per_pixel_loss = F.mse_loss(denoised, seq, reduction = 'none')
+        alpha = 0.001  # You can tune this (5.0 to 10.0 works well for sparse, bright images)
+        intensity_weight = 1.0 + alpha * seq.pow(2)  # or seq.abs() for signed values
+
+        # Apply intensity weights
+        weighted_pixel_loss = per_pixel_loss * intensity_weight
+
+        # Reduce spatial dimensions
+        losses = reduce(weighted_pixel_loss, 'b ... -> b', 'mean')
+
+        # Apply EDM loss weighting
         losses = losses * self.loss_weight(sigmas)
 
         return losses.mean()
@@ -512,5 +526,5 @@ class ImageAutoregressiveDiffusion(Module):
 
     def forward(self, images):
         images = normalize_to_neg_one_to_one(images)
-        tokens = self.to_tokens(images)
-        return self.model(tokens)
+        images = self.to_tokens(images)
+        return self.model(images)

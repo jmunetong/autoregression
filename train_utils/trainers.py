@@ -216,7 +216,7 @@ class TrainerDiffusion(BaseTrainer):
         dim = 1024,
         depth = 12,
         heads = 12) #TODO: Add experiment parameters for these values
-        self.patch_size = 16 # TODO: Add experiment parameters for this value
+        self.patch_size = 8 # TODO: Add experiment parameters for this value (first experiment we tried 16)
         self.image_shape = (1, *image_shape)
         
         self._get_prediction_shape_image()
@@ -337,7 +337,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         super().__init__(args, diff_model, None, scheduler, accelerator, recons_loss=None)
         # self.model_vae = self.unwrap(model) This part is not needed for the experiment given that we will be running without pre-trained VAE
       #TODO: Add experiment parameters for these values
-        self.patch_size = 24 # TODO: Add experiment parameters for this value
+        self.patch_size = 6 # TODO: Add experiment parameters for this value (24)
         self.image_shape = image_shape
         # import sys;
         # from icecream import ic
@@ -345,8 +345,8 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         # sys.exit(1)
         model_dim = dict(
         dim = 1024,
-        depth = 12,
-        heads = 3)
+        depth = 6,
+        heads = 4)
         # self._get_prediction_shape_image()
         self.model = diff_model(model=model_dim, image_size=self.image_shape[-1], patch_size=self.patch_size)
         self.optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-3)

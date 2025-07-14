@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-def trainsform_to_image(tensor):
+def transform_to_image(tensor):
     if isinstance(tensor, torch.Tensor):
         tensor = tensor.detach().cpu().numpy()
     return tensor
@@ -20,8 +20,8 @@ def plot_reconstruction(original: torch.Tensor, reconstructed: torch.Tensor, idx
         idx (int): Index in the batch to visualize
     """
     # Convert to numpy if tensors
-    original = trainsform_to_image(original)
-    reconstructed = trainsform_to_image(reconstructed)
+    original = transform_to_image(original)
+    reconstructed = transform_to_image(reconstructed)
     # Handle grayscale or RGB
     if original.ndim == 4:  # (B, C, H, W)
         original = np.transpose(original, (1, 2, 0))
@@ -44,7 +44,7 @@ def plot_reconstruction(original: torch.Tensor, reconstructed: torch.Tensor, idx
 
 def plot_diff(batch, directory, idx=0, min_pixel=None, max_pixel=None):
     
-    batch = trainsform_to_image(batch)
+    batch = transform_to_image(batch)
 
     batch = np.transpose(batch, (1, 2, 0))
     if min_pixel is None:
