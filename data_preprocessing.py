@@ -1,9 +1,10 @@
 
 import torch
-from torch import nn, optim
-from torch.utils.data import Dataset, DataLoader
+
+from torch.utils.data import Dataset
 import torch.nn.functional as F
-from torchvision import transforms
+import torch.nn as nn
+
 import numpy as np
 import einops
 
@@ -21,6 +22,13 @@ def preprocess_images(img:np.ndarray, repeat_dim=False):
     img[:,-10:,:]  = 0
     img[:,:, -10:] = 0
     return img
+
+
+def pad_to_multiple(x, multiple=16):
+    h, w = x.shape[-2], x.shape[-1]
+    pad_h = (multiple - h % multiple) % multiple
+    pad_w = (multiple - w % multiple) % multiple
+    return F.pad(x, (0, pad_w, 0, pad_h), "constant", 0)  # Pad with zeros
 
 
 # Define a dataset that loads your images.
@@ -73,8 +81,11 @@ class XrdDataset(Dataset):
                 img = img[:,:, 1:-2, 1:-2]
         else:
             img = img[:,:,3:, :-1] if img.shape[-1] != img.shape[-2] else img
+        
+        img = pad_to_multiple(img, 16)
 
         return img.squeeze(0)
+
 
 
 

@@ -376,8 +376,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         self.accelerator.wait_for_everyone()
         
 
-
-
     @staticmethod
     def unwrap(model):
         return model.module if hasattr(model, "module") else model

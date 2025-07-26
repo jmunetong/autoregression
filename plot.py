@@ -10,6 +10,21 @@ def transform_to_image(tensor):
     return tensor
 
 
+def plot_single_image(image: np.ndarray, idx: int, directory: str):
+    """
+    Plots a single image and saves it to the specified directory.
+
+    Args:
+        image (np.ndarray): Image array of shape (H, W) or (H, W, C)
+        idx (int): Index for naming the saved file
+        directory (str): Directory to save the plot
+    """
+    plt.imshow(image, cmap='gray' if image.ndim == 2 else None, vmin=np.percentile(image, 1), vmax=np.percentile(image, 99))
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig(os.path.join(directory, f'image_{idx}.png'))
+    plt.close()
+
 def plot_reconstruction(original: torch.Tensor, reconstructed: torch.Tensor, idx: int, directory: str):
     """
     Plots original and reconstructed images side-by-side.
