@@ -4,8 +4,9 @@ LATENT_CHANNELS=1
 NUM_EPOCHS=10
 B_VAE=1
 VQ_MODEL="vq"
-LOSSES=("iwmse" "mse" "l1")
-DATASETS=(522 422)
+# LOSSES=("iwmse" "mse" "l1")
+# DATASETS=(522 422)
+DATASETS=(522)
 
 echo "Running experiments for model: $VQ_MODEL"
 for dataset in "${DATASETS[@]}"; do

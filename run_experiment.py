@@ -115,6 +115,7 @@ def get_args():
     parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
     parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
     parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
+    parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
     
     args = parser.parse_args()
     return args
@@ -346,10 +347,10 @@ def run(args):
             print_color("Training Diffusion model", "blue")
       
         if args.use_vae:
-            diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr)
+            diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr, patch_size=args.patch_size)
         else:
             print_color("Training Diffusion model without VAE", "blue")
-            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(), learning_rate=args.lr, len_train_data_loader=len(dataloader), num_epochs=args.diff_epochs)
+            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, scheduler, accelerator, patch_size=args.patch_size, image_shape = dataset.get_image_shape(), learning_rate=args.lr, len_train_data_loader=len(dataloader), num_epochs=args.diff_epochs)
         if accelerator.is_main_process:
 
             print_color(f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")

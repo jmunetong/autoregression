@@ -18,6 +18,7 @@ from einops.layers.torch import Rearrange
 from tqdm import tqdm
 
 from x_transformers import Decoder
+from .loss import adaptive_weighted_loss
 
 # helpers
 
@@ -335,7 +336,8 @@ class ElucidatedDiffusion(Module):
 
         noise = torch.randn_like(seq)
 
-        noised_seq = seq + padded_sigmas * noise  # alphas are 1. in the paper
+        noised_seq = seq + padded_sigmas * noise  # alphas are 1. in the paper[
+
 
         denoised = self.preconditioned_network_forward(noised_seq, sigmas, cond = cond)
 
@@ -345,20 +347,21 @@ class ElucidatedDiffusion(Module):
         # losses = losses * self.loss_weight(sigmas)
 
         # return losses.mean()
-        per_pixel_loss = F.mse_loss(denoised, seq, reduction = 'none')
-        alpha = 0.001  # You can tune this (5.0 to 10.0 works well for sparse, bright images)
-        intensity_weight = 1.0 + alpha * seq.pow(2)  # or seq.abs() for signed values
+        # per_pixel_loss = F.mse_loss(denoised, seq, reduction = 'none')
+        # alpha = 0.001  # You can tune this (5.0 to 10.0 works well for sparse, bright images)
+        # intensity_weight = 1.0 + alpha * seq.pow(2)  # or seq.abs() for signed values
 
-        # Apply intensity weights
-        weighted_pixel_loss = per_pixel_loss * intensity_weight
+        # # Apply intensity weights
+        # weighted_pixel_loss = per_pixel_loss * intensity_weight
 
-        # Reduce spatial dimensions
-        losses = reduce(weighted_pixel_loss, 'b ... -> b', 'mean')
+        # # Reduce spatial dimensions
+        # losses = reduce(weighted_pixel_loss, 'b ... -> b', 'mean')
 
-        # Apply EDM loss weighting
-        losses = losses * self.loss_weight(sigmas)
-
-        return losses.mean()
+        # # Apply EDM loss weighting
+        # losses = losses * self.loss_weight(sigmas)
+        # l = losses.mean()
+        l = adaptive_weighted_loss(denoised, seq, kernel_size=16, weight_factor=2.0) #TODO: Verify these values
+        return l
 
 # main model, a decoder with continuous wrapper + small denoising mlp
 
