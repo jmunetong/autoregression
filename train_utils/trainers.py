@@ -348,7 +348,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         super().__init__(args, diff_model, None, scheduler, accelerator, recons_loss=None)
         # self.model_vae = self.unwrap(model) This part is not needed for the experiment given that we will be running without pre-trained VAE
       #TODO: Add experiment parameters for these values
-        self.patch_size = patch_size # TODO: Add experiment parameters for this value (24)
+        self.patch_size = patch_size
         self.image_shape = image_shape
         # import sys;
         # from icecream import ic

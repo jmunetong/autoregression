@@ -5,7 +5,7 @@ NUM_EPOCHS=12
 B_VAE=2
 KL_MODEL="vae_kl"
 VQ_MODEL="vq"
-LOSSES=("iwmse")
+LOSSES=("mse " "l1")
 DATASETS=(522 422)
 
 

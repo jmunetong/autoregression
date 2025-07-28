@@ -176,7 +176,9 @@ class ElucidatedDiffusion(Module):
         S_tmin = 0.05,
         S_tmax = 50,
         S_noise = 1.003,
-        clamp_during_sampling = True
+        clamp_during_sampling = True,
+        reshape_to_img = None,
+        reshape_to_seq = None
     ):
         super().__init__()
 
@@ -202,6 +204,8 @@ class ElucidatedDiffusion(Module):
         self.S_noise = S_noise
 
         self.clamp_during_sampling = clamp_during_sampling
+        self.reshape_to_img = reshape_to_img
+        self.reshape_to_seq = reshape_to_seq
 
     @property
     def device(self):
@@ -326,7 +330,7 @@ class ElucidatedDiffusion(Module):
     def noise_distribution(self, batch_size):
         return (self.P_mean + self.P_std * torch.randn((batch_size,), device = self.device)).exp()
 
-    def forward(self, seq, *, cond):
+    def forward(self, seq, *, cond, b):
         batch_size, dim, device = *seq.shape, self.device
 
         assert dim == self.dim, f'dimension of sequence being passed in must be {self.dim} but received {dim}'
@@ -346,7 +350,7 @@ class ElucidatedDiffusion(Module):
 
         # losses = losses * self.loss_weight(sigmas)
 
-        # return losses.mean()
+        # # return losses.mean()
         # per_pixel_loss = F.mse_loss(denoised, seq, reduction = 'none')
         # alpha = 0.001  # You can tune this (5.0 to 10.0 works well for sparse, bright images)
         # intensity_weight = 1.0 + alpha * seq.pow(2)  # or seq.abs() for signed values
@@ -360,7 +364,7 @@ class ElucidatedDiffusion(Module):
         # # Apply EDM loss weighting
         # losses = losses * self.loss_weight(sigmas)
         # l = losses.mean()
-        l = adaptive_weighted_loss(denoised, seq, kernel_size=16, weight_factor=2.0) #TODO: Verify these values
+        l = adaptive_weighted_loss(denoised, seq, kernel_size=16, weight_factor=2.0, reshape_to_img = self.reshape_to_img, reshape_to_seq = self.reshape_to_seq, batch_size=b) #TODO: Verify these values
         return l
 
 # main model, a decoder with continuous wrapper + small denoising mlp
@@ -381,7 +385,9 @@ class AutoregressiveDiffusion(Module):
         mlp_kwargs: dict = dict(),
         diffusion_kwargs: dict = dict(
             clamp_during_sampling = True
-        )
+        ),
+        reshape_to_img = None,
+        reshape_to_seq = None
     ):
         super().__init__()
 
@@ -413,6 +419,8 @@ class AutoregressiveDiffusion(Module):
         self.diffusion = ElucidatedDiffusion(
             dim_input,
             self.denoiser,
+            reshape_to_img= reshape_to_img,
+            reshape_to_seq= reshape_to_seq,
             **diffusion_kwargs
         )
 
@@ -484,7 +492,7 @@ class AutoregressiveDiffusion(Module):
         target, _ = pack_one(target, '* d')
         cond, _ = pack_one(cond, '* d')
 
-        diffusion_loss = self.diffusion(target, cond = cond)
+        diffusion_loss = self.diffusion(target, cond = cond, b=b)
 
         return diffusion_loss
 
@@ -513,14 +521,17 @@ class ImageAutoregressiveDiffusion(Module):
         self.patch_size = patch_size
 
         self.to_tokens = Rearrange('b c (h p1) (w p2) -> b (h w) (c p1 p2)', p1 = patch_size, p2 = patch_size)
+        self.to_image = Rearrange('b (h w) (c p1 p2) -> b c (h p1) (w p2)', p1 = patch_size, p2 = patch_size, h = int(math.sqrt(num_patches)))
     
         self.model = AutoregressiveDiffusion(
             **model,
             dim_input = dim_in,
-            max_seq_len = num_patches
+            max_seq_len = num_patches,
+            reshape_to_img = self.to_image,
+            reshape_to_seq = self.to_tokens
         )
 
-        self.to_image = Rearrange('b (h w) (c p1 p2) -> b c (h p1) (w p2)', p1 = patch_size, p2 = patch_size, h = int(math.sqrt(num_patches)))
+        
 
     def sample(self, batch_size = 1):
         tokens = self.model.sample(batch_size = batch_size)
