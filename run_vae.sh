@@ -1,12 +1,12 @@
 #!/bin/bash
 TEST_FLAG=$1
-LATENT_CHANNELS=2
+LATENT_CHANNELS=4
 NUM_EPOCHS=12
 B_VAE=2
 KL_MODEL="vae_kl"
 VQ_MODEL="vq"
-LOSSES=("mse " "l1")
-DATASETS=(522 422)
+LOSSES=("iwmse" "mse " "l1")
+DATASETS=(522)
 
 
 echo "Running experiments for model: $KL_MODEL"

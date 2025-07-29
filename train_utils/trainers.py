@@ -43,18 +43,64 @@ class BaseTrainer():
         Run the training loop for the model.
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
+    
+    def load_model(self, directory):
+        # 1. Load model weights (after .prepare, so we can unwrap)
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        unwrapped_model.load_pretrained(directory)
 
-    def save_model(self, directory):
+        # 2. Load optimizer/scheduler/epoch/loss from checkpoint.pt
+        checkpoint_path = os.path.join(directory, 'checkpoint.pt')
+        if os.path.exists(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
+
+            epoch = checkpoint.get('epoch', 0)
+            loss = checkpoint.get('loss', None)
+
+            return epoch, loss
+        else:
+            raise FileNotFoundError(f"checkpoint.pt not found in {directory}")
+
+    def save_model(self, directory, epoch=None, loss=None):
         unwrapped_model = self.accelerator.unwrap_model(self.model)
         unwrapped_model.save_pretrained(
         directory,
         is_main_process=self.accelerator.is_main_process,
         save_function=self.accelerator.save,
-)
+)   
+        checkpoint = {
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+            'epoch': epoch,
+            'loss': loss,
+        }
+        torch.save(checkpoint, os.path.join(directory, 'checkpoint.pt'))
         
     def _save_experiment_config(self, experiment_dict, directory):
         with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
             yaml.dump(experiment_dict, f, default_flow_style=False)
+
+    def load_weights(self, directory):
+        """
+        Load the model weights from the specified directory.
+        """
+        if not os.path.exists(directory):
+            raise FileNotFoundError(f"Directory {directory} does not exist.")
+        
+        checkpoint_path = os.path.join(directory, "checkpoint.pt")
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
+        
+        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
+        self.model.load_state_dict(checkpoint['model'])
+        if 'ema_model' in checkpoint:
+            self.ema_model.load_state_dict(checkpoint['ema_model'])
+        if 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+
 
 
 

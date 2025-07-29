@@ -39,7 +39,7 @@ def test_autoencoder_compatibility():
                 down_block_types=("DownEncoderBlock2D",) * 4,
                 up_block_types=("UpDecoderBlock2D",) * 4,
                 block_out_channels=(64, 128, 256, 512),
-                latent_channels=4,
+                latent_channels=5,
                 sample_size=64  # This doesn't limit input size
             )
 

@@ -60,6 +60,10 @@ def plot_reconstruction(original: torch.Tensor, reconstructed: torch.Tensor, idx
 def plot_diff(batch, directory, idx=0, min_pixel=None, max_pixel=None):
     
     batch = transform_to_image(batch)
+    if batch.ndim ==4:
+        assert batch.shape[0] == 1, "Batch should have a single image for plotting"
+        batch = batch.squeeze(0)
+    
 
     batch = np.transpose(batch, (1, 2, 0))
     if min_pixel is None:
