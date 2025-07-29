@@ -264,22 +264,24 @@ def run(args):
 
     # information for saving model-experiment characteristics.
     md_name = args.model_name if not args.diff else diff_name_config(args.use_vae)
-    model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
-    torch.cuda.empty_cache()
-
-    # Configure training
-    model_id, directory, experiment_dict = configure_training(args, model_name_dir)
+    directory = args.directory
 
     # Dataset and Dataloader
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
     
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
 
-    # Model Instantiation
-    model_config, trainer = init_configure_model(args)
-    model = MODELS[args.model_name](**model_config)
-    model.train()
-    
+    if args.continue_training:
+        # Load the model and optimizer states
+        model_id, directory, experiment_dict = configure_training(args, model_name_dir)
+        model = MODELS[args.model_name](**model_config)
+        model.train()
+    else:
+        # Model Instantiation
+        model_config, trainer = init_configure_model(args)
+        model = MODELS[args.model_name](**model_config)
+        model.train()
+
     # Configuring Optimizer steps
     num_training_steps = len(dataloader) * args.num_epochs
     num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
