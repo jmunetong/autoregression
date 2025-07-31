@@ -5,74 +5,22 @@ from accelerate import Accelerator, load_checkpoint_in_model, infer_auto_device_
 import wandb
 import torch.distributed as dist
 import json
-import yaml
+
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
 from torch.utils.data import DataLoader
 import numpy as np
-
 from transformers import get_cosine_schedule_with_warmup
-from diffusers import AutoencoderKL, VQModel
 from icecream import ic
 
-from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
-from utils import get_device, create_directory, print_color
-from data_preprocessing import XrdDataset
-from train_utils.losses import IntensityWeightedMSELoss
-from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion, TrainerDiffusionNonVAE
-from plot import plot_reconstruction, plot_diff, transform_to_image
+from configs import *
 
+from utils import print_color, prepare_state_dict, generate_vae_samples, generate_diff_samples
+from data_preprocessing import XrdDataset
+from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion, TrainerDiffusionNonVAE
 
 accelerator = Accelerator(log_with="wandb")
-FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
-DATA_PATH = "data"
-URL_MODEL = "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/blob/main/vae-ft-mse-840000-ema-pruned.safetensors"
-
-EXPERIMENTS = {
-    422: 'mfxl1025422',
-    522: 'mfxl1027522'
-}
-
-RECONS_LOSS = {
-    "mse": nn.MSELoss(reduction="mean"),
-    "l1": nn.L1Loss(reduction="mean"),
-    "iwmse": IntensityWeightedMSELoss(alpha=2.0),}
-
-MODELS= {"vae_kl": AutoencoderKL,
-        "vq": VQModel}
-
-def vae_config_dict(args):
-    config = {
-        "in_channels": 1,
-        "out_channels": 1,
-        "latent_channels": args.latent_channels,
-        "down_block_types": ("DownEncoderBlock2D",) * 4,
-        "up_block_types": ("UpDecoderBlock2D",) * 4,
-        "block_out_channels": (32, 64, 128, 128),
-        "sample_size": 64,
-        "mid_block_add_attention": True
-    }
-    return config
-
-def vq_config_dict(args):
-    config = {
-        "in_channels": 1,
-        "out_channels": 1,
-        "latent_channels": args.latent_channels,
-        "down_block_types":("DownEncoderBlock2D",) * 4,
-        "up_block_types": ("UpDecoderBlock2D",) * 4,
-        "block_out_channels": (32, 64, 128, 128),
-        "sample_size": 64,
-        "layers_per_block": 1,
-        "act_fn": "silu",
-        "sample_size": 32, #TODO: Modify this to the actual image size
-        "num_vq_embeddings": 256,
-        "norm_num_groups": 32,
-        "scaling_factor": 1,
-        "norm_type": "spatial"
-    }   
-    return config
 
 
 def get_args():
@@ -116,170 +64,30 @@ def get_args():
     parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
     parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
     parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
+    parser.add_argument("--vit_size", type=str, default="base", choices=["base", "large", "huge"], help="Size of the VIT model")
     
     args = parser.parse_args()
     return args
 
 
-def diff_name_config(use_vae):
-    return f"diff_{args.model_name}" if use_vae else f"diff_non_vae_{args.model_name}"
-
-def generate_vae_samples(model, dataloader, directory):
-    count = 0
-    for i, batch in enumerate(dataloader):
-        if i > 2:
-            break
-        for j in range(batch.shape[0]):
-            recons = model(batch[j].unsqueeze(0), return_dict=True).sample
-            plot_reconstruction(batch[j],recons, idx=count, directory=directory)
-            count += 1
-            del recons
-            if count > 5:
-                break
-
-def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
-    for i in range(count):
-        batch = diff_model.sample(batch_size=1)
-        plot_fn = plot_output_vae if use_vae else plot_non_vae
-        plot_fn(model, batch, i, directory, min_pixel, max_pixel)
-
-def plot_non_vae(model, batch, i, directory, min_pixel, max_pixel):
-    min_pixel = np.percentile(transform_to_image(batch), 1)
-    max_pixel = np.percentile(transform_to_image(batch), 99)
-    plot_diff(batch, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
-
-def plot_output_vae(model, batch, i, directory, min_pixel, max_pixel):
-    out = model.decode(batch.unsqueeze(0), return_dict=True).sample
-    min_pixel = np.percentile(transform_to_image(out), 1)
-    max_pixel = np.percentile(transform_to_image(out), 99)
-    out = out[0]
-    if out.dim() == 3:
-        out = out.unsqueeze(0)
-    plot_diff(out, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
-
-def build_experiment_metadata(args):
-    metadata = {
-        "model_name": args.model_name,
-        "data_id": args.data_id,
-        "batch_size": args.batch_size,
-        "num_epochs": args.num_epochs,
-        "beta_recons": args.beta_recons,
-        "recons_loss": args.recons_loss,
-        "input_shape": None,
-        "latent_shape": None,
-        "avg_pooling": args.avg_pooling,
-        "weight_decay": args.weight_decay,
-        "learning_rate": args.lr,
-        "latent_channels": args.latent_channels,
-
-    }
-    if args.recons_loss == 'iwmse':
-        metadata['alpha_mse'] = args.alpha_mse  
-    return metadata
-
-def init_configure_model(args):
-    """
-    Initialize the model configuration based on the provided arguments.
-    
-    Args:
-        args (argparse.Namespace): Command line arguments containing model parameters.
-    
-    Returns:
-        dict: A dictionary containing the model configuration.
-    """
-    if args.model_name == "vae_kl":
-        return vae_config_dict(args), TrainerVAE
-    elif args.model_name == "vq":
-        return vq_config_dict(args), TrainerVQ
-    else:
-        raise ValueError(f"Unknown model name: {args.model_name}")
-
-
-
-def configure_training(args, model_name_dir):
-        # Step 1: Main process creates directory and metadata
-    if accelerator.is_main_process:
-        model_id, directory = create_directory(model_name_dir, args.data_id)
-        experiment_dict = build_experiment_metadata(args)
-        
-        # Convert directory to string if it's a Path object
-        directory_str = str(directory) if hasattr(directory, "__fspath__") else directory
-        
-        # Store in temporary file 
-        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
-        with open(temp_path, "w") as f:
-            f.write(directory_str)
-        
-        # Store the metadata in the actual directory
-        with open(f"{directory}/metadata.json", "w") as f:
-            json.dump({
-                "model_id": model_id,
-                "directory": directory_str,
-                "experiment_dict": experiment_dict
-            }, f)
-
-    # Step 2: Wait for file to be written
-    accelerator.wait_for_everyone()
-
-    # Step 3: All non-main processes read the directory path and load values
-    if not accelerator.is_main_process:
-        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
-        with open(temp_path, "r") as f:
-            directory = f.read().strip()
-        
-        with open(f"{directory}/metadata.json", "r") as f:
-            data = json.load(f)
-            model_id = data["model_id"]
-            experiment_dict = data["experiment_dict"]
-
-    # Clean up the temporary file
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
-        device = get_device()
-        print(f'Current CUDA device is:{device}')
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        if args.test_pipeline:
-            print_color("Test pipeline is enabled. Exiting.", "red")
-        else:
-            print_color("Experiment Running", "Green")
-
-    return model_id, directory, experiment_dict
-    
-def update_args(args, state_dict):
-    for key, value in state_dict.items():
-        if hasattr(args, key):
-            setattr(args, key, value)
-
 def run(args):   
     # Create a shared variable to store the values
-
-    # Make sure that args.diff and args.prettrained_vae are usually used so that VAE does not need to be trained from scratch. 
-    if args.diff and args.pretrained_vae:
-        with open(os.path.join(args.pretrained_vae, "experiment_config.yml"), "r") as file:
-            state_dict = yaml.safe_load(file)
-        update_args(args,state_dict )
-
-    # information for saving model-experiment characteristics.
-    md_name = args.model_name if not args.diff else diff_name_config(args.use_vae)
-    model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
-    torch.cuda.empty_cache()
-
-    # Configure training
-    model_id, directory, experiment_dict = configure_training(args, model_name_dir)
-
+    model_id, directory, experiment_dict = prepare_state_dict(args, accelerator)
     # Dataset and Dataloader
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
-    
+
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
 
     # Model Instantiation
+
+    
+    
+    # Configuring Optimizer steps
+    #########################################
+    # TODO: DO THIS INSIDE TRAINER
     model_config, trainer = init_configure_model(args)
     model = MODELS[args.model_name](**model_config)
     model.train()
-    
-    # Configuring Optimizer steps
     num_training_steps = len(dataloader) * args.num_epochs
     num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
@@ -293,10 +101,13 @@ def run(args):
     # Accelerator instantiation
     model, optimizer, dataloader, scheduler = accelerator.prepare(
     model, optimizer, dataloader, scheduler)
+
     model = model.module if hasattr(model, "module") else model
     recons_loss = RECONS_LOSS[args.recons_loss]
+    ## ALL THIS INSIDE THE GIVEN MODEL 
+    #################################
 
-
+    dataloader = accelerator.prepare(dataloader)
     if accelerator.is_main_process:
         total_params = sum(p.numel() for p in model.parameters())
         print(f'Total parameters: {total_params:,}')
@@ -327,34 +138,23 @@ def run(args):
             model = AutoencoderKL.from_pretrained(
                 args.pretrained_vae,
             )
-            # device_map = infer_auto_device_map(model)
-            # model = load_checkpoint_in_model(
-            #     model,
-            #     args.pretrained_vae,
-            #     device_map=device_map,
-            # )
+
             model = accelerator.prepare(model)
             accelerator.wait_for_everyone()
-            # model = MODELS[args.model_name](**model_config_load)
-            # load_checkpoint_in_model(
-            #     model,
-            #     checkpoint=safe_tensor_path,
-            #     offload_state_dict=True)
-            # accelerator.wait_for_everyone()
-            # model = accelerator.prepare(model)
+
     else:
         pass
     if args.diff:
-       
-      
+        diff_model = init_configure_vit(args.vit_size, args.patch_size, dataset.get_image_shape())
         if args.use_vae:
             if accelerator.is_main_process:
                 print_color("Training Diffusion model with VAE", "blue")
-            diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr, patch_size=args.patch_size)
+            diffusion_trainer = TrainerDiffusion(args, model, diff_model, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr, patch_size=args.patch_size)
         else:
+            del model
             if accelerator.is_main_process:
                 print_color("Training Diffusion model without VAE", "blue")
-            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, scheduler, accelerator, patch_size=args.patch_size, image_shape = dataset.get_image_shape(), learning_rate=args.lr, len_train_data_loader=len(dataloader), num_epochs=args.diff_epochs)
+            diffusion_trainer = TrainerDiffusionNonVAE(args, diff_model, scheduler, accelerator, patch_size=args.patch_size, image_shape = dataset.get_image_shape(), learning_rate=args.lr, len_train_data_loader=len(dataloader), num_epochs=args.diff_epochs)
         if accelerator.is_main_process:
             print_color(f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")
        
@@ -373,6 +173,7 @@ def run(args):
         if not args.diff:
             generate_vae_samples(model, dataloader, directory)
         else:
+            #TODO: MAKE THE INFERENCE GENERATION BE ACROSS EACH GPU.
             samples = 10
             min_pixel, max_pixel = dataset.get_min_max()
             #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.

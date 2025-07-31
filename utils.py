@@ -5,6 +5,10 @@ import os
 import zarr
 import numpy as np
 import torch
+import yaml
+import json 
+
+from plot import plot_reconstruction, plot_diff, transform_to_image
 
 
 def load_zarr_files(directory_list, data_id):
@@ -79,6 +83,27 @@ def get_device():
             
     return device
 
+
+def build_experiment_metadata(args):
+    metadata = {
+        "model_name": args.model_name,
+        "data_id": args.data_id,
+        "batch_size": args.batch_size,
+        "num_epochs": args.num_epochs,
+        "beta_recons": args.beta_recons,
+        "recons_loss": args.recons_loss,
+        "input_shape": None,
+        "latent_shape": None,
+        "avg_pooling": args.avg_pooling,
+        "weight_decay": args.weight_decay,
+        "learning_rate": args.lr,
+        "latent_channels": args.latent_channels,
+
+    }
+    if args.recons_loss == 'iwmse':
+        metadata['alpha_mse'] = args.alpha_mse  
+    return metadata
+
 def create_experiment_id(model_name="vae", data_id=522):
     timestamp = time.strftime("%y%m%d-%H%M")
     unique_id = uuid.uuid4().hex[:8]  # short unique hash
@@ -107,3 +132,113 @@ def print_color(text, color="default"):
     reset = "\033[0m"
     color_code = colors.get(color.lower(), colors["default"])
     print(f"{color_code}{text}{reset}")
+
+def update_args(args, state_dict):
+    for key, value in state_dict.items():
+        if hasattr(args, key):
+            setattr(args, key, value)
+
+
+def prepare_state_dict(args, accelerator):
+    # Make sure that args.diff and args.prettrained_vae are usually used so that VAE does not need to be trained from scratch. 
+    if args.diff and args.pretrained_vae:
+        with open(os.path.join(args.pretrained_vae, "experiment_config.yml"), "r") as file:
+            state_dict = yaml.safe_load(file)
+        update_args(args,state_dict )
+
+    # information for saving model-experiment characteristics.
+    md_name = args.model_name if not args.diff else diff_name_config(args.use_vae, args)
+    model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
+    torch.cuda.empty_cache()
+
+    # Configure training
+    model_id, directory, experiment_dict = configure_training(args, model_name_dir, accelerator)
+    return model_id, directory, experiment_dict
+
+def diff_name_config(use_vae, args):
+    return f"diff_{args.model_name}" if use_vae else f"diff_non_vae_{args.model_name}"
+
+def generate_vae_samples(model, dataloader, directory):
+    count = 0
+    for i, batch in enumerate(dataloader):
+        if i > 2:
+            break
+        for j in range(batch.shape[0]):
+            recons = model(batch[j].unsqueeze(0), return_dict=True).sample
+            plot_reconstruction(batch[j],recons, idx=count, directory=directory)
+            count += 1
+            del recons
+            if count > 5:
+                break
+
+def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
+    for i in range(count):
+        batch = diff_model.sample(batch_size=1)
+        plot_fn = plot_output_vae if use_vae else plot_non_vae
+        plot_fn(model, batch, i, directory, min_pixel, max_pixel)
+
+def plot_non_vae(model, batch, i, directory, min_pixel, max_pixel):
+    min_pixel = np.percentile(transform_to_image(batch), 1)
+    max_pixel = np.percentile(transform_to_image(batch), 99)
+    plot_diff(batch, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
+
+def plot_output_vae(model, batch, i, directory, min_pixel, max_pixel):
+    out = model.decode(batch.unsqueeze(0), return_dict=True).sample
+    min_pixel = np.percentile(transform_to_image(out), 1)
+    max_pixel = np.percentile(transform_to_image(out), 99)
+    out = out[0]
+    if out.dim() == 3:
+        out = out.unsqueeze(0)
+    plot_diff(out, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
+
+def configure_training(args, model_name_dir, accelerator):
+        # Step 1: Main process creates directory and metadata
+    if accelerator.is_main_process:
+        model_id, directory = create_directory(model_name_dir, args.data_id)
+        experiment_dict = build_experiment_metadata(args)
+        
+        # Convert directory to string if it's a Path object
+        directory_str = str(directory) if hasattr(directory, "__fspath__") else directory
+        
+        # Store in temporary file 
+        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
+        with open(temp_path, "w") as f:
+            f.write(directory_str)
+        
+        # Store the metadata in the actual directory
+        with open(f"{directory}/metadata.json", "w") as f:
+            json.dump({
+                "model_id": model_id,
+                "directory": directory_str,
+                "experiment_dict": experiment_dict
+            }, f)
+
+    # Step 2: Wait for file to be written
+    accelerator.wait_for_everyone()
+
+    # Step 3: All non-main processes read the directory path and load values
+    if not accelerator.is_main_process:
+        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
+        with open(temp_path, "r") as f:
+            directory = f.read().strip()
+        
+        with open(f"{directory}/metadata.json", "r") as f:
+            data = json.load(f)
+            model_id = data["model_id"]
+            experiment_dict = data["experiment_dict"]
+
+    # Clean up the temporary file
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
+        device = get_device()
+        print(f'Current CUDA device is:{device}')
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        if args.test_pipeline:
+            print_color("Test pipeline is enabled. Exiting.", "red")
+        else:
+            print_color("Experiment Running", "Green")
+
+    return model_id, directory, experiment_dict
+    

@@ -13,18 +13,6 @@ import torch
 from transformers import get_cosine_schedule_with_warmup
 from torch.optim import AdamW
 
-VIT_MODELS = {"base": dict(
-                dim = 768,
-                depth = 12,
-                heads =12),
-            "large": dict(
-                dim= 1024,
-                depth=24, 
-                heads=16),
-            "huge": dict(
-                dim= 1280,
-                depth=32,
-                heads=20)}
 
 
 TEST_LEGNTH = 1
@@ -100,8 +88,6 @@ class BaseTrainer():
             self.ema_model.load_state_dict(checkpoint['ema_model'])
         if 'optimizer' in checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
-
-
 
 
 class TrainerVQ(BaseTrainer):
@@ -187,6 +173,33 @@ class TrainerVAE(BaseTrainer):
 
             self.annealer = Annealer(total_steps, shape, baseline, cyclical)
 
+    def _init_model(self):
+        model_config, trainer = init_configure_model(self.args)
+        model = MODELS[self.args.model_name](**model_config)
+        model.train()
+        num_training_steps = len(dataloader) * args.num_epochs
+        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
+        self.model = model
+
+    def _init_optimizer(self):
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+
+        # Scheduler
+    def _init_scheduler(self, num_training_steps, num_warmup_steps):
+        self.scheduler = get_cosine_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps)
+        
+    def _prepare_training_components(self) 
+        # Accelerator instantiation
+        model, optimizer, dataloader, scheduler = self.accelerator.prepare(
+        model, optimizer, dataloader, scheduler)
+
+        model = model.module if hasattr(model, "module") else model
+        recons_loss = RECONS_LOSS[args.recons_loss] #TODO: Where is the reconstruction loss defined?
+
        
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
@@ -268,6 +281,8 @@ class TrainerVAE(BaseTrainer):
 class TrainerDiffusion(BaseTrainer):
     def __init__(self, args, model,diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4):
         super().__init__(args, model, None, scheduler, accelerator, recons_loss=None)
+        
+        ## ALL THIS THINGS NEED TO HAPPEN BEFORE WE ARE ABLE TO RUN THE MODEL
         self.model_vae = self.unwrap(model)
         model_dim = dict(
         dim = 1024,
@@ -390,19 +405,10 @@ class TrainerDiffusion(BaseTrainer):
 
     
 class TrainerDiffusionNonVAE(BaseTrainer):
-    def __init__(self, args, diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4, len_train_data_loader=None, num_epochs=None, patch_size =16, vit_size="base"):
+    def __init__(self, args, diff_model, scheduler, accelerator, learning_rate=1e-4, len_train_data_loader=None, num_epochs=None):
         super().__init__(args, diff_model, None, scheduler, accelerator, recons_loss=None)
-        # self.model_vae = self.unwrap(model) This part is not needed for the experiment given that we will be running without pre-trained VAE
-      #TODO: Add experiment parameters for these values
-        self.patch_size = patch_size
-        self.image_shape = image_shape
-        # import sys;
-        # from icecream import ic
-        # ic(f"Image shape: {self.image_shape}")
-        # sys.exit(1)
-        model_dim = VIT_MODELS[vit_size]
-        # self._get_prediction_shape_image()
-        self.model = diff_model(model=model_dim, image_size=self.image_shape[-1], patch_size=self.patch_size)
+        
+        self.model = diff_model
         self.optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-3)
 
         num_training_steps = len_train_data_loader * num_epochs
@@ -414,8 +420,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             num_training_steps=num_training_steps
         )
         self.model, self.optimizer, self.scheduler = self.accelerator.prepare(self.model, self.optimizer, self.scheduler)
-        self.encoding_shape = image_shape
-        
         ema_kwargs = dict() # TODO: Fix this line of code
 
         if self.is_main:

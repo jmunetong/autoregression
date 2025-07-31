@@ -1,201 +1,17 @@
 import os
-from argparse import ArgumentParser
 
-from accelerate import Accelerator, load_checkpoint_in_model, infer_auto_device_map
-import wandb
-import torch.distributed as dist
 import json
 import yaml
 import torch
-import torch.nn.functional as F
-from torch import nn, optim
-from torch.utils.data import DataLoader
+
+from torch import  optim
+
 import numpy as np
 
 from transformers import get_cosine_schedule_with_warmup
-from diffusers import AutoencoderKL, VQModel
-from icecream import ic
 
-from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion
-from utils import get_device, create_directory, print_color
-from data_preprocessing import XrdDataset
-from train_utils.losses import IntensityWeightedMSELoss
-from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion, TrainerDiffusionNonVAE
-from plot import plot_reconstruction, plot_diff, transform_to_image
-
-
-accelerator = Accelerator(log_with="wandb")
-FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
-DATA_PATH = "data"
-URL_MODEL = "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/blob/main/vae-ft-mse-840000-ema-pruned.safetensors"
-
-EXPERIMENTS = {
-    422: 'mfxl1025422',
-    522: 'mfxl1027522'
-}
-
-RECONS_LOSS = {
-    "mse": nn.MSELoss(reduction="mean"),
-    "l1": nn.L1Loss(reduction="mean"),
-    "iwmse": IntensityWeightedMSELoss(alpha=2.0),}
-
-MODELS= {"vae_kl": AutoencoderKL,
-        "vq": VQModel}
-
-def vae_config_dict(args):
-    config = {
-        "in_channels": 1,
-        "out_channels": 1,
-        "latent_channels": args.latent_channels,
-        "down_block_types": ("DownEncoderBlock2D",) * 4,
-        "up_block_types": ("UpDecoderBlock2D",) * 4,
-        "block_out_channels": (32, 64, 128, 128),
-        "sample_size": 64,
-        "mid_block_add_attention": True
-    }
-    return config
-
-def vq_config_dict(args):
-    config = {
-        "in_channels": 1,
-        "out_channels": 1,
-        "latent_channels": args.latent_channels,
-        "down_block_types":("DownEncoderBlock2D",) * 4,
-        "up_block_types": ("UpDecoderBlock2D",) * 4,
-        "block_out_channels": (32, 64, 128, 128),
-        "sample_size": 64,
-        "layers_per_block": 1,
-        "act_fn": "silu",
-        "sample_size": 32,
-        "num_vq_embeddings": 256,
-        # "vq_embed_dim": 64,
-        "norm_num_groups": 32,
-        "scaling_factor": 1,
-        "norm_type": "spatial"
-    }   
-    return config
-
-
-def get_args():
-    parser = ArgumentParser()
-
-    os.makedirs("results", exist_ok=True)
-    # Model Name
-    parser.add_argument("--model_name", "-m", type=str, default="vae_kl", help="Name of model")
-    parser.add_argument("--latent_channels", type=int, default=4, help="Number of latent channels")
-
-    # Data parameters
-    parser.add_argument("--data_id", type=int, default=522, choices=[422, 522], help="Experiment number")
-    parser.add_argument("--avg_pooling", action='store_true', help="Apply average pooling to the images")
-    parser.add_argument("--topk", type=float, default=1.0, help="Top k percent of images to use for training")
-
-    # Training parameters
-    parser.add_argument("--num_epochs", "-e", type=int, default=20, help="Number of epochs for training")
-    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate training model")
-    parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay for optimizer")
-    parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
-    parser.add_argument("-recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
-    parser.add_argument("--alpha_mse", type=float, default=2.0, help="Alpha value for Intensity Weighted MSE Loss")
-
-    # Pipeline parameters
-    parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
-    parser.add_argument("--batch_size", "-b", type=int, default=3, help="Batch size for training")
-    parser.add_argument(
-        "--test_pipeline", "-t",
-        action="store_true",
-        help="Enable test pipeline (default: False)"
-    )
-
-    # Arguments for variational autoencoder.
-    parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
-    parser.add_argument("--annealing_shape", type=str, default="cosine", choices=["linear", "cosine", "logistic"], help="Shape of the annealing function")
     
-    # Diffusion model arguments
-    parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
-    parser.add_argument("--use_vae", action='store_true', help="Use VAE model for diffusion training")
-    parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
-    parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
-    parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
-    parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
-    
-    args = parser.parse_args()
-    return args
-
-
-def diff_name_config(use_vae):
-    return f"diff_{args.model_name}" if use_vae else f"diff_non_vae_{args.model_name}"
-
-def generate_vae_samples(model, dataloader, directory):
-    count = 0
-    for i, batch in enumerate(dataloader):
-        if i > 2:
-            break
-        for j in range(batch.shape[0]):
-            recons = model(batch[j].unsqueeze(0), return_dict=True).sample
-            plot_reconstruction(batch[j],recons, idx=count, directory=directory)
-            count += 1
-            del recons
-            if count > 5:
-                break
-
-def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
-    for i in range(count):
-        batch = diff_model.sample(batch_size=1)
-        plot_fn = plot_output_vae if use_vae else plot_non_vae
-        plot_fn(model, batch, i, directory, min_pixel, max_pixel)
-
-def plot_non_vae(model, batch, i, directory, min_pixel, max_pixel):
-    min_pixel = np.percentile(transform_to_image(batch), 1)
-    max_pixel = np.percentile(transform_to_image(batch), 99)
-    plot_diff(batch, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
-
-def plot_output_vae(model, batch, i, directory, min_pixel, max_pixel):
-    out = model.decode(batch.unsqueeze(0), return_dict=True).sample
-    min_pixel = np.percentile(transform_to_image(out), 1)
-    max_pixel = np.percentile(transform_to_image(out), 99)
-    out = out[0]
-    if out.dim() == 3:
-        out = out.unsqueeze(0)
-    plot_diff(out, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
-
-def build_experiment_metadata(args):
-    metadata = {
-        "model_name": args.model_name,
-        "data_id": args.data_id,
-        "batch_size": args.batch_size,
-        "num_epochs": args.num_epochs,
-        "beta_recons": args.beta_recons,
-        "recons_loss": args.recons_loss,
-        "input_shape": None,
-        "latent_shape": None,
-        "avg_pooling": args.avg_pooling,
-        "weight_decay": args.weight_decay,
-        "learning_rate": args.lr,
-        "latent_channels": args.latent_channels,
-
-    }
-    if args.recons_loss == 'iwmse':
-        metadata['alpha_mse'] = args.alpha_mse  
-    return metadata
-
-def init_configure_model(args):
-    """
-    Initialize the model configuration based on the provided arguments.
-    
-    Args:
-        args (argparse.Namespace): Command line arguments containing model parameters.
-    
-    Returns:
-        dict: A dictionary containing the model configuration.
-    """
-    if args.model_name == "vae_kl":
-        return vae_config_dict(args), TrainerVAE
-    elif args.model_name == "vq":
-        return vq_config_dict(args), TrainerVQ
-    else:
-        raise ValueError(f"Unknown model name: {args.model_name}")
-    
-def load_confiture_training(state_directory):
+def load_configure_training(state_directory):
     directory = state_directory
     with open(os.path.join(directory, "config.json"), "r") as file:
         model_config = json.load(file)
@@ -205,8 +21,9 @@ def load_confiture_training(state_directory):
 
     return model_config, experiment_dict
 
-def load_diffusers_hmodel(model, directory, accelerator):
+def load_diffusers_model(model, directory, accelerator):
     model = model.from_pretrained(directory,use_safetensors=True )
+    model = accelerator.prepare(model)
     return model
 
 def load_optim_scheduler(model, directory, accelerator, args):
@@ -221,17 +38,12 @@ def load_optim_scheduler(model, directory, accelerator, args):
     Returns:
         tuple: A tuple containing the loaded optimizer and scheduler.
     """
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) #TODO: SAVE THIS IN THE FILE THAT WE NHAVE
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=0,
         num_training_steps=1000  # Placeholder, will be updated later
     )
-    
-
-    # STATE DICT FILE SHOULD CONTAIN (# 'optimizer': optimizer.state_dict(),
-    # 'scheduler': scheduler.state_dict(), 
-    # learning rate
     
     checkpoint = torch.load(os.path.join(directory, "state_dict.pt"), map_location=accelerator.device)
 
@@ -245,210 +57,9 @@ def load_optim_scheduler(model, directory, accelerator, args):
     optimizer, scheduler = accelerator.prepare(optimizer, scheduler)
     return optimizer, scheduler
 
-
-def _prepare_mod(model, optimizer, scheduler, accelerator):
-    """
-    Prepare the model, optimizer, and scheduler for training with the accelerator.
-    
-    Args:
-        model: The model to be prepared.
-        optimizer: The optimizer to be prepared.
-        scheduler: The scheduler to be prepared.
-        accelerator: The accelerator instance.
-    
-    Returns:
-        tuple: Prepared model, optimizer, and scheduler.
-    """
-    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
-    return model, optimizer, scheduler
+def _load_mar_model(checkpoint, model, accelerator):
+    model = model.load_state_dict(checkpoint['model'])
+    model = accelerator.prepare(model)
+    return model
 
 
-def configure_training(args, model_name_dir):
-        # Step 1: Main process creates directory and metadata
-    if accelerator.is_main_process:
-        model_id, directory = create_directory(model_name_dir, args.data_id)
-        experiment_dict = build_experiment_metadata(args)
-        
-        # Convert directory to string if it's a Path object
-        directory_str = str(directory) if hasattr(directory, "__fspath__") else directory
-        
-        # Store in temporary file 
-        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
-        with open(temp_path, "w") as f:
-            f.write(directory_str)
-        
-        # Store the metadata in the actual directory
-        with open(f"{directory}/metadata.json", "w") as f:
-            json.dump({
-                "model_id": model_id,
-                "directory": directory_str,
-                "experiment_dict": experiment_dict
-            }, f)
-
-    # Step 2: Wait for file to be written
-    accelerator.wait_for_everyone()
-
-    # Step 3: All non-main processes read the directory path and load values
-    if not accelerator.is_main_process:
-        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
-        with open(temp_path, "r") as f:
-            directory = f.read().strip()
-        
-        with open(f"{directory}/metadata.json", "r") as f:
-            data = json.load(f)
-            model_id = data["model_id"]
-            experiment_dict = data["experiment_dict"]
-
-    # Clean up the temporary file
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_dir_path.txt")
-        device = get_device()
-        print(f'Current CUDA device is:{device}')
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        if args.test_pipeline:
-            print_color("Test pipeline is enabled. Exiting.", "red")
-        else:
-            print_color("Experiment Running", "Green")
-
-    return model_id, directory, experiment_dict
-    
-def update_args(args, state_dict):
-    for key, value in state_dict.items():
-        if hasattr(args, key):
-            setattr(args, key, value)
-
-def run(args):   
-    # Create a shared variable to store the values
-
-    # Make sure that args.diff and args.prettrained_vae are usually used so that VAE does not need to be trained from scratch. 
-    if args.diff and args.pretrained_vae:
-        with open(os.path.join(args.pretrained_vae, "experiment_config.yml"), "r") as file:
-            state_dict = yaml.safe_load(file)
-        update_args(args,state_dict )
-
-    directory = args.directory
-
-    # Dataset and Dataloader
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
-    
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
-
-    if args.continue_training:
-        # Load the model and optimizer states
-        model = MODELS[args.model_name](**model_config)
-        model.train()
-    else:
-        # Model Instantiation
-        model_config, trainer = init_configure_model(args)
-        model = MODELS[args.model_name](**model_config)
-        model.train()
-
-    # Configuring Optimizer steps
-    num_training_steps = len(dataloader) * args.num_epochs
-    num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
-
-    # Scheduler
-    scheduler = get_cosine_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=num_warmup_steps,
-        num_training_steps=num_training_steps)
-    
-    # Accelerator instantiation
-    model, optimizer, dataloader, scheduler = accelerator.prepare(
-    model, optimizer, dataloader, scheduler)
-    model = model.module if hasattr(model, "module") else model
-    recons_loss = RECONS_LOSS[args.recons_loss]
-
-
-    if accelerator.is_main_process:
-        total_params = sum(p.numel() for p in model.parameters())
-        print(f'Total parameters: {total_params:,}')
-        
-    args_dict = vars(args)
-    args_dict['model_id'] = model_id
-    accelerator.init_trackers(
-        args.model_name,
-        config=args_dict
-    )
-    
-    if not args.diff or (args.diff and args.train_vae):
-        print_color("Training VAE model", "blue")
-        train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
-        train_pipeline.run_train(dataloader, experiment_dict, directory)
-    elif args.use_vae:
-        with open(os.path.join(args.pretrained_vae, "config.json"), "r") as f:
-            model_config_load = json.load(f)
-        accelerator.wait_for_everyone()
-        
-        safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
-   
-        if not os.path.exists(safe_tensor_path):
-            if accelerator.is_main_process:
-                print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
-            return
-        else:
-            model = AutoencoderKL.from_pretrained(
-                args.pretrained_vae,
-            )
-          
-            model = accelerator.prepare(model)
-            accelerator.wait_for_everyone()
-           
-    else:
-        pass
-    if args.diff:
-       
-      
-        if args.use_vae:
-            if accelerator.is_main_process:
-                print_color("Training Diffusion model with VAE", "blue")
-            diffusion_trainer = TrainerDiffusion(args, model, ImageAutoregressiveDiffusion, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr, patch_size=args.patch_size)
-        else:
-            if accelerator.is_main_process:
-                print_color("Training Diffusion model without VAE", "blue")
-            diffusion_trainer = TrainerDiffusionNonVAE(args, ImageAutoregressiveDiffusion, scheduler, accelerator, patch_size=args.patch_size, image_shape = dataset.get_image_shape(), learning_rate=args.lr, len_train_data_loader=len(dataloader), num_epochs=args.diff_epochs)
-        if accelerator.is_main_process:
-            print_color(f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")
-       
-        diffusion_trainer.run_train(dataloader, experiment_dict, directory)
-
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        with open(os.path.join(directory, "config.json"), "w") as file:
-            json.dump(model_config, file)
-
-        print_color('Training Complete',"green")
-        print_color(f"Model information stored in: {directory}", "yellow")
-        model.eval()
-        
-        torch.cuda.empty_cache()
-        if not args.diff:
-            generate_vae_samples(model, dataloader, directory)
-        else:
-            samples = 10
-            min_pixel, max_pixel = dataset.get_min_max()
-            #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
-            generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel, args.use_vae)
-
-            if args.use_vae:
-                print_color("Generating samples with VAE", "blue")
-                generate_vae_samples(model, dataloader, directory)
-            generate_vae_samples(diffusion_trainer.unwrap(model), dataloader, directory)
-
-    accelerator.end_training()
-    
-
-
-if __name__ == '__main__':
-    args = get_args()
-    run(args)
-    # try:
-        
-    # except Exception as e:
-    #     accelerator.end_training()
-    #     if accelerator.is_main_process:
-    #         print_color("Experiment Failed", "red")
-    #         print(f"❌ Failed to compute: {e}")
