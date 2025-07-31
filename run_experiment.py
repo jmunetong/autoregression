@@ -1,18 +1,12 @@
 import os
 from argparse import ArgumentParser
 
-from accelerate import Accelerator, load_checkpoint_in_model, infer_auto_device_map
-import wandb
+from accelerate import Accelerator
 import torch.distributed as dist
 import json
 
 import torch
-import torch.nn.functional as F
-from torch import nn, optim
 from torch.utils.data import DataLoader
-import numpy as np
-from transformers import get_cosine_schedule_with_warmup
-from icecream import ic
 
 from train_utils.configs import *
 
@@ -68,6 +62,7 @@ def get_args():
     parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
     parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
     parser.add_argument("--vit_size", type=str, default="base", choices=["base", "large", "huge"], help="Size of the VIT model")
+    parser.add_arugment("--patch_size", type=int, default=16, help="Patch size for the VIT model")
 
     # Inference parameters #TODO: Complete this part for running inference values
     parser.add_argument("--generate_samples", "-gs", action="store_true", help="Generate samples after training")
@@ -117,7 +112,7 @@ def run(args):
 
 
     
-    if args.diff:
+    if args.latent_diff:
         diff_model = init_configure_vit(args.vit_size, args.patch_size, dataset.get_image_shape()) #TODO: MODIFY THIS SO THAT THE TRAINER IS RESPONSIBLE FOR INITIALIZING THE DIFFUSION MODEL WITH THE GIVEN PARAMETERS
         #TODO: Add diffusion model configurations to experiment dict to be able to modify these values later
         if args.use_vae:

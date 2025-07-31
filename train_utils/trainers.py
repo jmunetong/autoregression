@@ -14,17 +14,17 @@ import torch
 from transformers import get_cosine_schedule_with_warmup
 from torch.optim import AdamW
 
-from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model
+from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model, init_configure_vit
 
 TEST_LEGNTH = 1
 
 class BaseTrainer():
-    def __init__(self, args,  accelerator, len_dataloader=None):
+    def __init__(self, model, args,  accelerator, len_dataloader=None):
         self.args = args
         self.accelerator = accelerator
-
-        self.model = self._init_model()
-
+        self.current_epoch = 0
+        self.model = model
+        
         self.optimizer = self._init_optimizer()
         assert len_dataloader is not None, "len_train_data_loader must be provided"
 
@@ -104,8 +104,8 @@ class BaseTrainer():
         save_function=self.accelerator.save,
 )   
         checkpoint = {
-            'optimizer': self.optimizer.state_dict(),
-            'scheduler': self.scheduler.state_dict(),
+            'optimizer': self.accelerator.unwrap_model(self.optimizer).state_dict(),
+            'scheduler': self.accelerator.unwrap_model(self.scheduler).state_dict(),
             'epoch': epoch,
             'loss': loss,
         }
@@ -136,9 +136,8 @@ class BaseTrainer():
 
 class TrainerVQ(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):
-        super().__init__(args, accelerator, len_dataloader)
-       
-    
+        super().__init__(model=self._init_model(), args=args, accelerator=accelerator, len_dataloader=len_dataloader)
+
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
         beta_recons = self.args.beta_recons
@@ -186,6 +185,7 @@ class TrainerVQ(BaseTrainer):
                 if self.accelerator.is_main_process:
                     tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
                 del recon_loss_i, recons
+
                 
                 # Step optimizer after accumulating gradients
                 
@@ -193,6 +193,7 @@ class TrainerVQ(BaseTrainer):
             # Update epoch metrics with batch averages
             epoch_loss /= len(data_loader)
             epoch_recon_loss /= len(data_loader)
+            self.current_epoch += 1
             
             print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss})
@@ -272,6 +273,7 @@ class TrainerVAE(BaseTrainer):
             epoch_loss /= len(data_loader)
             epoch_kl_loss /= len(data_loader)
             epoch_recon_loss /= len(data_loader)
+            self.current_epoch += 1
             
 
             if self.accelerator.is_main_process:
@@ -289,7 +291,7 @@ class TrainerVAE(BaseTrainer):
 
 
 class TrainerDiffusion(BaseTrainer):
-    def __init__(self, args, model,diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4):
+    def __init__(self, args, model,diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4, patch_size=16):
         super().__init__(args, model, None, scheduler, accelerator, recons_loss=None)
         
         ## ALL THIS THINGS NEED TO HAPPEN BEFORE WE ARE ABLE TO RUN THE MODEL
@@ -298,7 +300,7 @@ class TrainerDiffusion(BaseTrainer):
         dim = 1024,
         depth = 12,
         heads = 12) #TODO: Add experiment parameters for these values
-        self.patch_size = 8 # TODO: Add experiment parameters for this value (first experiment we tried 16)
+        self.patch_size = patch_size # TODO: Add experiment parameters for this value (first experiment we tried 16)
         self.image_shape = (1, *image_shape)
         
         self._get_prediction_shape_image()
@@ -415,21 +417,24 @@ class TrainerDiffusion(BaseTrainer):
 
     
 class TrainerDiffusionNonVAE(BaseTrainer):
-    def __init__(self, args, diff_model, scheduler, accelerator, learning_rate=1e-4, len_train_data_loader=None, num_epochs=None):
-        super().__init__(args, diff_model, None, scheduler, accelerator, recons_loss=None)
-        
-        self.model = diff_model
-        self.optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-3)
+    def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
+        assert input_shape is not None, "input_shape must be provided"
+        super().__init__(model=init_configure_vit(
+            vit_size=args.vit_size,
+            patch_size=args.patch_size,
+            input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
+        ), args=args, accelerator=accelerator, len_dataloader=len_train_data_loader)
+        # self.optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-3)
 
-        num_training_steps = len_train_data_loader * num_epochs
-        warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
+        # num_training_steps = len_train_data_loader * num_epochs
+        # warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
 
-        self.scheduler = get_cosine_schedule_with_warmup(
-            self.optimizer,
-            num_warmup_steps=warmup_steps,
-            num_training_steps=num_training_steps
-        )
-        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(self.model, self.optimizer, self.scheduler)
+        # self.scheduler = get_cosine_schedule_with_warmup(
+        #     self.optimizer,
+        #     num_warmup_steps=warmup_steps,
+        #     num_training_steps=num_training_steps
+        # )
+        # self.model, self.optimizer, self.scheduler = self.accelerator.prepare(self.model, self.optimizer, self.scheduler)
         ema_kwargs = dict() # TODO: Fix this line of code
 
         if self.is_main:
@@ -513,6 +518,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             model = self.accelerator.unwrap_model(self.model).state_dict(),
             ema_model = self.ema_model.state_dict(),
             optimizer = self.accelerator.unwrap_model(self.optimizer).state_dict(),
+            scheduler = self.accelerator.unwrap_model(self.scheduler).state_dict(),
         )
 
         torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
@@ -529,11 +535,22 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
         
         checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
+        self.model = self.accelerator.unwrap_model(self.model)
+        self.optimizer = self.accelerator.unwrap_model(self.optimizer)
+        self.scheduler = self.accelerator.unwrap_model(self.scheduler)
         self.model.load_state_dict(checkpoint['model'])
-        if 'ema_model' in checkpoint:
+        if 'ema_model' in checkpoint: # this is not necessary for now
             self.ema_model.load_state_dict(checkpoint['ema_model'])
         if 'optimizer' in checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if 'scheduler' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
+
+        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
+            self.model, self.optimizer, self.scheduler
+        )
+        self.accelerator.wait_for_everyone()
+        
 
 
         
