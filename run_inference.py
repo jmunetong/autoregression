@@ -194,7 +194,73 @@ def init_configure_model(args):
         return vq_config_dict(args), TrainerVQ
     else:
         raise ValueError(f"Unknown model name: {args.model_name}")
+    
+def load_confiture_training(state_directory):
+    directory = state_directory
+    with open(os.path.join(directory, "config.json"), "r") as file:
+        model_config = json.load(file)
 
+    with open(os.path.join(directory, "experiment_config.yml"), "r") as file:
+        experiment_dict = yaml.safe_load(file)
+
+    return model_config, experiment_dict
+
+def load_diffusers_hmodel(model, directory, accelerator):
+    model = model.from_pretrained(directory,use_safetensors=True )
+    return model
+
+def load_optim_scheduler(model, directory, accelerator, args):
+    """
+    Load the optimizer and scheduler state from the specified directory.
+    
+    Args:
+        model: The model to load the optimizer and scheduler for.
+        directory (str): The directory where the optimizer and scheduler states are stored.
+        accelerator: The accelerator instance for distributed training.
+    
+    Returns:
+        tuple: A tuple containing the loaded optimizer and scheduler.
+    """
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) #TODO: SAVE THIS IN THE FILE THAT WE NHAVE
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=1000  # Placeholder, will be updated later
+    )
+    
+
+    # STATE DICT FILE SHOULD CONTAIN (# 'optimizer': optimizer.state_dict(),
+    # 'scheduler': scheduler.state_dict(), 
+    # learning rate
+    
+    checkpoint = torch.load(os.path.join(directory, "state_dict.pt"), map_location=accelerator.device)
+
+    # TODO: Fix this to be able to load the state_dict.pt file
+    if os.path.exists(os.path.join(directory, "optimizer.pt")):
+        optimizer.load_state_dict(checkpoint['optimizer'])
+    
+    if os.path.exists(os.path.join(directory, "scheduler.pt")):
+        scheduler.load_state_dict(checkpoint['scheduler'])
+    
+    optimizer, scheduler = accelerator.prepare(optimizer, scheduler)
+    return optimizer, scheduler
+
+
+def _prepare_mod(model, optimizer, scheduler, accelerator):
+    """
+    Prepare the model, optimizer, and scheduler for training with the accelerator.
+    
+    Args:
+        model: The model to be prepared.
+        optimizer: The optimizer to be prepared.
+        scheduler: The scheduler to be prepared.
+        accelerator: The accelerator instance.
+    
+    Returns:
+        tuple: Prepared model, optimizer, and scheduler.
+    """
+    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    return model, optimizer, scheduler
 
 
 def configure_training(args, model_name_dir):
@@ -262,8 +328,6 @@ def run(args):
             state_dict = yaml.safe_load(file)
         update_args(args,state_dict )
 
-    # information for saving model-experiment characteristics.
-    md_name = args.model_name if not args.diff else diff_name_config(args.use_vae)
     directory = args.directory
 
     # Dataset and Dataloader
@@ -273,7 +337,6 @@ def run(args):
 
     if args.continue_training:
         # Load the model and optimizer states
-        model_id, directory, experiment_dict = configure_training(args, model_name_dir)
         model = MODELS[args.model_name](**model_config)
         model.train()
     else:
@@ -330,21 +393,10 @@ def run(args):
             model = AutoencoderKL.from_pretrained(
                 args.pretrained_vae,
             )
-            # device_map = infer_auto_device_map(model)
-            # model = load_checkpoint_in_model(
-            #     model,
-            #     args.pretrained_vae,
-            #     device_map=device_map,
-            # )
+          
             model = accelerator.prepare(model)
             accelerator.wait_for_everyone()
-            # model = MODELS[args.model_name](**model_config_load)
-            # load_checkpoint_in_model(
-            #     model,
-            #     checkpoint=safe_tensor_path,
-            #     offload_state_dict=True)
-            # accelerator.wait_for_everyone()
-            # model = accelerator.prepare(model)
+           
     else:
         pass
     if args.diff:

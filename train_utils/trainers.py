@@ -503,5 +503,23 @@ class TrainerDiffusionNonVAE(BaseTrainer):
 
         torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
 
+    def load_weights(self, directory):
+        """
+        Load the model weights from the specified directory.
+        """
+        if not os.path.exists(directory):
+            raise FileNotFoundError(f"Directory {directory} does not exist.")
+        
+        checkpoint_path = os.path.join(directory, "checkpoint.pt")
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
+        
+        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
+        self.model.load_state_dict(checkpoint['model'])
+        if 'ema_model' in checkpoint:
+            self.ema_model.load_state_dict(checkpoint['ema_model'])
+        if 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+
 
         

@@ -66,9 +66,8 @@ def vq_config_dict(args):
         "sample_size": 64,
         "layers_per_block": 1,
         "act_fn": "silu",
-        "sample_size": 32,
+        "sample_size": 32, #TODO: Modify this to the actual image size
         "num_vq_embeddings": 256,
-        # "vq_embed_dim": 64,
         "norm_num_groups": 32,
         "scaling_factor": 1,
         "norm_type": "spatial"
