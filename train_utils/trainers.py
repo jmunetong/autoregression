@@ -1,4 +1,5 @@
 import os
+from pyexpat import model
 
 import yaml
 import torch
@@ -13,25 +14,38 @@ import torch
 from transformers import get_cosine_schedule_with_warmup
 from torch.optim import AdamW
 
-
+from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model
 
 TEST_LEGNTH = 1
 
 class BaseTrainer():
-    def __init__(self, args, model, optimizer, scheduler, accelerator,  recons_loss):
+    def __init__(self, args,  accelerator):
         self.args = args
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
         self.accelerator = accelerator
-        self.recons_loss = recons_loss
-
+    
     def run_trainer(self, data_loader, experiment_dict, directory):
         """
         Run the training loop for the model.
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
     
+    def _init_model(self):
+        model_config = init_configure_model(self.args)
+        model = MODELS[self.args.model_name](**model_config)
+        return model
+ 
+    def _init_optimizer(self):
+        optimizer = AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+        return optimizer
+    
+        # Scheduler
+    def _init_scheduler(self, num_training_steps, num_warmup_steps):
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer=self.optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps)
+        return scheduler
+        
     def load_model(self, directory):
         # 1. Load model weights (after .prepare, so we can unwrap)
         unwrapped_model = self.accelerator.unwrap_model(self.model)
@@ -40,7 +54,7 @@ class BaseTrainer():
         # 2. Load optimizer/scheduler/epoch/loss from checkpoint.pt
         checkpoint_path = os.path.join(directory, 'checkpoint.pt')
         if os.path.exists(checkpoint_path):
-            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            checkpoint = torch.load(checkpoint_path, map_location='cpu') #TODO: SHOULD THIS ACTUALLY BE ON GPU OR CPU
 
             self.optimizer.load_state_dict(checkpoint['optimizer'])
             self.scheduler.load_state_dict(checkpoint['scheduler'])
@@ -88,11 +102,37 @@ class BaseTrainer():
             self.ema_model.load_state_dict(checkpoint['ema_model'])
         if 'optimizer' in checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
-
+    
 
 class TrainerVQ(BaseTrainer):
-    def __init__(self, args, model, optimizer, scheduler, accelerator, recons_loss):
-        super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss)
+    def __init__(self, args, accelerator, len_dataloader=None):
+        super().__init__(args, accelerator)
+        self.model = self._init_model()
+
+        self.optimizer = self._init_optimizer()
+        assert len_dataloader is not None, "len_train_data_loader must be provided"
+
+        # Scheduler parameters
+        num_training_steps = len_dataloader * args.num_epochs
+        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
+        # preparing configurations for the model
+        self.scheduler = self._init_scheduler(num_training_steps, num_warmup_steps)
+
+        # Prepare the model, optimizer, and scheduler with the accelerator
+        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
+            self.model, self.optimizer, self.scheduler)
+
+        # Initialize losses
+        self.recons_loss = RECONS_LOSS[args.recons_loss]
+        self.use_annealing = args.use_annealing
+        if self.use_annealing:
+            total_steps = args.num_epochs
+            shape = args.annealing_shape
+            baseline = 0.0
+            cyclical = False
+            disable = False
+
+            self.annealer = Annealer(total_steps, shape, baseline, cyclical)
     
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
@@ -161,8 +201,29 @@ class TrainerVQ(BaseTrainer):
 
 
 class TrainerVAE(BaseTrainer):
-    def __init__(self, args, model, optimizer, scheduler, accelerator, recons_loss):
-        super().__init__(args, model, optimizer, scheduler, accelerator, recons_loss)
+    def __init__(self, args, accelerator, len_dataloader=None):
+        super().__init__(args, accelerator)
+
+        self.model = self._init_model()
+        if accelerator.is_main_process:
+            total_params = sum(p.numel() for p in self.model.parameters())
+            print(f'Total parameters: {total_params:,}')
+        
+        self.optimizer = self._init_optimizer()
+        assert len_dataloader is not None, "len_train_data_loader must be provided"
+
+        # Scheduler parameters
+        num_training_steps = len_dataloader * args.num_epochs
+        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
+        # preparing configurations for the model
+        self.scheduler = self._init_scheduler(num_training_steps, num_warmup_steps)
+
+        # Prepare the model, optimizer, and scheduler with the accelerator
+        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
+            self.model, self.optimizer, self.scheduler)
+
+        # Initialize losses
+        self.recons_loss = RECONS_LOSS[args.recons_loss]
         self.use_annealing = args.use_annealing
         if self.use_annealing:
             total_steps = args.num_epochs
@@ -173,35 +234,8 @@ class TrainerVAE(BaseTrainer):
 
             self.annealer = Annealer(total_steps, shape, baseline, cyclical)
 
-    def _init_model(self):
-        model_config, trainer = init_configure_model(self.args)
-        model = MODELS[self.args.model_name](**model_config)
-        model.train()
-        num_training_steps = len(dataloader) * args.num_epochs
-        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
-        self.model = model
-
-    def _init_optimizer(self):
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
-
-        # Scheduler
-    def _init_scheduler(self, num_training_steps, num_warmup_steps):
-        self.scheduler = get_cosine_schedule_with_warmup(
-            optimizer=optimizer,
-            num_warmup_steps=num_warmup_steps,
-            num_training_steps=num_training_steps)
-        
-    def _prepare_training_components(self) 
-        # Accelerator instantiation
-        model, optimizer, dataloader, scheduler = self.accelerator.prepare(
-        model, optimizer, dataloader, scheduler)
-
-        model = model.module if hasattr(model, "module") else model
-        recons_loss = RECONS_LOSS[args.recons_loss] #TODO: Where is the reconstruction loss defined?
-
-       
     def run_train(self, data_loader, experiment_dict, directory):
+        self.model.train()
         best_loss = float('inf')
         beta_recons = self.args.beta_recons
 

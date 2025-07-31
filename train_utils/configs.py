@@ -1,7 +1,6 @@
 from diffusers import AutoencoderKL, VQModel
 import torch.nn as nn
 
-
 from train_utils.losses import IntensityWeightedMSELoss
 from train_utils.trainers import TrainerVAE, TrainerVQ
 from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion as diff_model
@@ -79,9 +78,9 @@ def init_configure_model(args):
         dict: A dictionary containing the model configuration.
     """
     if args.model_name == "vae_kl":
-        return vae_config_dict(args), TrainerVAE
+        return vae_config_dict(args)
     elif args.model_name == "vq":
-        return vq_config_dict(args), TrainerVQ
+        return vq_config_dict(args)
     else:
         raise ValueError(f"Unknown model name: {args.model_name}")
 

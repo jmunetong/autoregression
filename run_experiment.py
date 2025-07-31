@@ -14,7 +14,7 @@ import numpy as np
 from transformers import get_cosine_schedule_with_warmup
 from icecream import ic
 
-from configs import *
+from train_utils.configs import *
 
 from utils import print_color, prepare_state_dict, generate_vae_samples, generate_diff_samples
 from data_preprocessing import XrdDataset
@@ -77,40 +77,9 @@ def run(args):
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
 
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
-
-    # Model Instantiation
-
-    
-    
-    # Configuring Optimizer steps
-    #########################################
-    # TODO: DO THIS INSIDE TRAINER
-    model_config, trainer = init_configure_model(args)
-    model = MODELS[args.model_name](**model_config)
-    model.train()
-    num_training_steps = len(dataloader) * args.num_epochs
-    num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
-
-    # Scheduler
-    scheduler = get_cosine_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=num_warmup_steps,
-        num_training_steps=num_training_steps)
-    
-    # Accelerator instantiation
-    model, optimizer, dataloader, scheduler = accelerator.prepare(
-    model, optimizer, dataloader, scheduler)
-
-    model = model.module if hasattr(model, "module") else model
-    recons_loss = RECONS_LOSS[args.recons_loss]
-    ## ALL THIS INSIDE THE GIVEN MODEL 
-    #################################
-
+    len_dataloader = len(dataloader)
     dataloader = accelerator.prepare(dataloader)
-    if accelerator.is_main_process:
-        total_params = sum(p.numel() for p in model.parameters())
-        print(f'Total parameters: {total_params:,}')
+
         
     args_dict = vars(args)
     args_dict['model_id'] = model_id
