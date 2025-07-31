@@ -19,10 +19,40 @@ from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model
 TEST_LEGNTH = 1
 
 class BaseTrainer():
-    def __init__(self, args,  accelerator):
+    def __init__(self, args,  accelerator, len_dataloader=None):
         self.args = args
         self.accelerator = accelerator
-    
+
+        self.model = self._init_model()
+
+        self.optimizer = self._init_optimizer()
+        assert len_dataloader is not None, "len_train_data_loader must be provided"
+
+        # Scheduler parameters
+        num_training_steps = len_dataloader * args.num_epochs
+        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
+        # preparing configurations for the model
+        self.scheduler = self._init_scheduler(num_training_steps, num_warmup_steps)
+
+        # Prepare the model, optimizer, and scheduler with the accelerator
+        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
+            self.model, self.optimizer, self.scheduler)
+
+        # Initialize losses
+        self.recons_loss = RECONS_LOSS[args.recons_loss]
+        self.use_annealing = args.use_annealing
+        if self.use_annealing:
+            total_steps = args.num_epochs
+            shape = args.annealing_shape
+            baseline = 0.0
+            cyclical = False
+            disable = False
+
+            self.annealer = Annealer(total_steps, shape, baseline, cyclical, disable)
+
+    def get_model(self, with_accelerator=True):
+        return self.model if with_accelerator else self.accelerator.unwrap_model(self.model)
+
     def run_trainer(self, data_loader, experiment_dict, directory):
         """
         Run the training loop for the model.
@@ -106,33 +136,8 @@ class BaseTrainer():
 
 class TrainerVQ(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):
-        super().__init__(args, accelerator)
-        self.model = self._init_model()
-
-        self.optimizer = self._init_optimizer()
-        assert len_dataloader is not None, "len_train_data_loader must be provided"
-
-        # Scheduler parameters
-        num_training_steps = len_dataloader * args.num_epochs
-        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
-        # preparing configurations for the model
-        self.scheduler = self._init_scheduler(num_training_steps, num_warmup_steps)
-
-        # Prepare the model, optimizer, and scheduler with the accelerator
-        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
-            self.model, self.optimizer, self.scheduler)
-
-        # Initialize losses
-        self.recons_loss = RECONS_LOSS[args.recons_loss]
-        self.use_annealing = args.use_annealing
-        if self.use_annealing:
-            total_steps = args.num_epochs
-            shape = args.annealing_shape
-            baseline = 0.0
-            cyclical = False
-            disable = False
-
-            self.annealer = Annealer(total_steps, shape, baseline, cyclical)
+        super().__init__(args, accelerator, len_dataloader)
+       
     
     def run_train(self, data_loader, experiment_dict, directory):
         best_loss = float('inf')
@@ -202,37 +207,8 @@ class TrainerVQ(BaseTrainer):
 
 class TrainerVAE(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):
-        super().__init__(args, accelerator)
+        super().__init__(args, accelerator, len_dataloader=len_dataloader)
 
-        self.model = self._init_model()
-        if accelerator.is_main_process:
-            total_params = sum(p.numel() for p in self.model.parameters())
-            print(f'Total parameters: {total_params:,}')
-        
-        self.optimizer = self._init_optimizer()
-        assert len_dataloader is not None, "len_train_data_loader must be provided"
-
-        # Scheduler parameters
-        num_training_steps = len_dataloader * args.num_epochs
-        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
-        # preparing configurations for the model
-        self.scheduler = self._init_scheduler(num_training_steps, num_warmup_steps)
-
-        # Prepare the model, optimizer, and scheduler with the accelerator
-        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
-            self.model, self.optimizer, self.scheduler)
-
-        # Initialize losses
-        self.recons_loss = RECONS_LOSS[args.recons_loss]
-        self.use_annealing = args.use_annealing
-        if self.use_annealing:
-            total_steps = args.num_epochs
-            shape = args.annealing_shape
-            baseline = 0.0
-            cyclical = False
-            disable = False
-
-            self.annealer = Annealer(total_steps, shape, baseline, cyclical)
 
     def run_train(self, data_loader, experiment_dict, directory):
         self.model.train()

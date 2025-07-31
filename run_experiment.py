@@ -18,7 +18,7 @@ from train_utils.configs import *
 
 from utils import print_color, prepare_state_dict, generate_vae_samples, generate_diff_samples
 from data_preprocessing import XrdDataset
-from train_utils.trainers import TrainerVAE, TrainerVQ, TrainerDiffusion, TrainerDiffusionNonVAE
+
 
 accelerator = Accelerator(log_with="wandb")
 
@@ -30,6 +30,8 @@ def get_args():
     # Model Name
     parser.add_argument("--model_name", "-m", type=str, default="vae_kl", help="Name of model")
     parser.add_argument("--latent_channels", type=int, default=4, help="Number of latent channels")
+    parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
+    parser.add_argument("--inference", action="store_true", help="Run inference on the trained model")
 
     # Data parameters
     parser.add_argument("--data_id", type=int, default=522, choices=[422, 522], help="Experiment number")
@@ -59,12 +61,16 @@ def get_args():
     
     # Diffusion model arguments
     parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
+    parser.add_argument("--latent_diffisuion", action="store_true", help="Use latent diffusion model")
     parser.add_argument("--use_vae", action='store_true', help="Use VAE model for diffusion training")
-    parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
+
     parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
     parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
     parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
     parser.add_argument("--vit_size", type=str, default="base", choices=["base", "large", "huge"], help="Size of the VIT model")
+
+    # Inference parameters #TODO: Complete this part for running inference values
+    parser.add_argument("--generate_samples", "-gs", action="store_true", help="Generate samples after training")
     
     args = parser.parse_args()
     return args
@@ -79,8 +85,7 @@ def run(args):
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
     len_dataloader = len(dataloader)
     dataloader = accelerator.prepare(dataloader)
-
-        
+    
     args_dict = vars(args)
     args_dict['model_id'] = model_id
     accelerator.init_trackers(
@@ -88,33 +93,33 @@ def run(args):
         config=args_dict
     )
     
-    if not args.diff or (args.diff and args.train_vae):
-        print_color("Training VAE model", "blue")
-        train_pipeline = trainer(args, model, optimizer, scheduler, accelerator, recons_loss)
-        train_pipeline.run_train(dataloader, experiment_dict, directory)
-    elif args.use_vae:
-        with open(os.path.join(args.pretrained_vae, "config.json"), "r") as f:
-            model_config_load = json.load(f)
-        accelerator.wait_for_everyone()
-        
-        safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
-   
-        if not os.path.exists(safe_tensor_path):
-            if accelerator.is_main_process:
-                print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
-            return
+    if not args.diff or args.latent_diffisuion: 
+        # Train a VAE or VQ model either for generative modeling or to train A vae model for latent diffusion.
+        print_color(f"Training {args.model_name} model", "blue")
+        if args.model_name == "vae_kl":
+             from train_utils.trainers import TrainerVAE as trainer
         else:
-            model = AutoencoderKL.from_pretrained(
-                args.pretrained_vae,
-            )
+            from train_utils.trainers import TrainerVQ as trainer
+        train_pipeline_vae = trainer(args, accelerator,len_dataloader)
+        train_pipeline_vae.run_train(dataloader, experiment_dict, directory) #TODO: TAKE THIS OUT OF THIS IF LOOP STATEMENT.
+    
+        # This trains the VAE model #TODO: THIS MUST BE TAKEN OUTB OF THIS INNER LOOP:
+        # - Reasons (continued training, different model, etc.)
+        if args.train_vae:
+            if accelerator.is_main_process:
+                print_color("Training VAE model", "blue")
+            train_pipeline_vae.run_train(dataloader, experiment_dict, directory)
+        else:
+            loading_directory = None
+            train_pipeline_vae.load_model(loading_directory)
+            logging.info(f"Loaded model from {loading_directory if loading_directory else 'default path'}")
 
-            model = accelerator.prepare(model)
-            accelerator.wait_for_everyone()
 
-    else:
-        pass
+
+    
     if args.diff:
-        diff_model = init_configure_vit(args.vit_size, args.patch_size, dataset.get_image_shape())
+        diff_model = init_configure_vit(args.vit_size, args.patch_size, dataset.get_image_shape()) #TODO: MODIFY THIS SO THAT THE TRAINER IS RESPONSIBLE FOR INITIALIZING THE DIFFUSION MODEL WITH THE GIVEN PARAMETERS
+        #TODO: Add diffusion model configurations to experiment dict to be able to modify these values later
         if args.use_vae:
             if accelerator.is_main_process:
                 print_color("Training Diffusion model with VAE", "blue")
@@ -167,3 +172,37 @@ if __name__ == '__main__':
     #     if accelerator.is_main_process:
     #         print_color("Experiment Failed", "red")
     #         print(f"❌ Failed to compute: {e}")
+
+    # elif args.use_vae: #TODO: There might be a better logic to handle this case
+
+    #     # This is for training a diffusion model with a VAE backend. This assumes that the VAE model has been trained and is ready to be used.
+    #     if args.model_name == "vae_kl":
+    #          from train_utils.trainers import TrainerVAE as trainer
+    #     else:
+    #         from train_utils.trainers import TrainerVQ as trainer
+    #     train_pipeline = trainer(args, accelerator,len_dataloader)
+    #     train_pipeline.load_model() # TODO: Pass the correct parameters for the model
+    #     model = train_pipeline.get_model(with_accelerator=False)
+    #     model = accelerator.prepare(model)
+    #     accelerator.wait_for_everyone()
+    #     if accelerator.is_main_process:
+    #         print_color(f"Loaded {args.model_name} model for diffusion training", "blue")
+
+
+        # with open(os.path.join(args.pretrained_vae, "config.json"), "r") as f:
+        #     model_config_load = json.load(f)
+        # accelerator.wait_for_everyone()
+        
+        # safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
+   
+        # if not os.path.exists(safe_tensor_path):
+        #     if accelerator.is_main_process:
+        #         print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
+        #     return
+        # else:
+        #     model = AutoencoderKL.from_pretrained(
+        #         args.pretrained_vae,
+        #     )
+
+        #     model = accelerator.prepare(model)
+        #     accelerator.wait_for_everyone() #TODO: use the trainer to load the parameters and do not do it here
