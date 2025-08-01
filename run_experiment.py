@@ -66,6 +66,7 @@ def get_args():
 
     # Inference parameters #TODO: Complete this part for running inference values
     parser.add_argument("--generate_samples", "-gs", action="store_true", help="Generate samples after training")
+    parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to generate")
     
     args = parser.parse_args()
     return args
@@ -95,26 +96,26 @@ def run(args):
              from train_utils.trainers import TrainerVAE as trainer
         else:
             from train_utils.trainers import TrainerVQ as trainer
-        train_pipeline_vae = trainer(args, accelerator,len_dataloader)
-        train_pipeline_vae.run_train(dataloader, experiment_dict, directory) #TODO: TAKE THIS OUT OF THIS IF LOOP STATEMENT.
+        trainer_vae = trainer(args, accelerator,len_dataloader)
+        trainer_vae.run_train(dataloader, experiment_dict, directory) #TODO: TAKE THIS OUT OF THIS IF LOOP STATEMENT.
     
         # This trains the VAE model #TODO: THIS MUST BE TAKEN OUTB OF THIS INNER LOOP:
         # - Reasons (continued training, different model, etc.)
         if args.train_vae:
             if accelerator.is_main_process:
                 print_color("Training VAE model", "blue")
-            train_pipeline_vae.run_train(dataloader, experiment_dict, directory)
+            trainer_vae.run_train(dataloader, experiment_dict, directory)
         else:
             loading_directory = None
-            train_pipeline_vae.load_model(loading_directory)
+            trainer_vae.load_model(loading_directory)
             logging.info(f"Loaded model from {loading_directory if loading_directory else 'default path'}")
         if accelerator.is_main_process:
-            model_config = train_pipeline_vae.get_model_config()
+            model_config = trainer_vae.get_model_config()
 
 
     if args.latent_diff:
         from train_utils.trainers import TrainerDiffusion as train_diff
-        vae_model = train_pipeline_vae.get_model(with_accelerator=False)
+        vae_model = trainer_vae.get_model(with_accelerator=False)
         #TODO: Add this model into the class and make sure to wrap it around accelerator.
         if accelerator.is_main_process:
             print_color("Training Diffusion model with VAE", "blue")
@@ -143,22 +144,27 @@ def run(args):
 
         print_color('Training Complete',"green")
         print_color(f"Model information stored in: {directory}", "yellow")
-        model.eval()
         
-        torch.cuda.empty_cache()
-        if not args.diff:
-            generate_vae_samples(model, dataloader, directory)
-        else:
-            #TODO: MAKE THE INFERENCE GENERATION BE ACROSS EACH GPU.
-            samples = 10
-            min_pixel, max_pixel = dataset.get_min_max()
-            #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
-            generate_diff_samples(diffusion_trainer.unwrap(model), diffusion_trainer.get_diff_model(), directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel, args.use_vae)
+        
+    torch.cuda.empty_cache()
 
-            if args.use_vae:
-                print_color("Generating samples with VAE", "blue")
-                generate_vae_samples(model, dataloader, directory)
-            generate_vae_samples(diffusion_trainer.unwrap(model), dataloader, directory)
+    #TODO: MAKE SURE THAT WE ARE GENERATING IMAGES SAMPLES BASED ON THE NUMBER OF GPUS
+    if not args.diff or not args.latent_diff:
+        generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
+    else:
+        #TODO: MAKE THE INFERENCE GENERATION BE ACROSS EACH GPU.
+        samples = args.num_samples if args.num_samples > 0 else 10
+        if accelerator.is_main_process:
+            print_color(f"Generating {samples} samples with diffusion model", "blue")
+        min_pixel, max_pixel = dataset.get_min_max()
+        #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
+
+        generate_diff_samples(diffusion_trainer.get_model().eval(),  directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel, args.use_vae)
+
+        if args.use_vae:
+            print_color("Generating samples with VAE", "blue")
+            generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
+        # generate_vae_samples(trainer_vae.get_model(), dataloader, directory)
 
     accelerator.end_training()
     
