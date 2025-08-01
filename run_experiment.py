@@ -108,28 +108,35 @@ def run(args):
             loading_directory = None
             train_pipeline_vae.load_model(loading_directory)
             logging.info(f"Loaded model from {loading_directory if loading_directory else 'default path'}")
+        if accelerator.is_main_process:
+            model_config = train_pipeline_vae.get_model_config()
 
 
-
-    
     if args.latent_diff:
-        diff_model = init_configure_vit(args.vit_size, args.patch_size, dataset.get_image_shape()) #TODO: MODIFY THIS SO THAT THE TRAINER IS RESPONSIBLE FOR INITIALIZING THE DIFFUSION MODEL WITH THE GIVEN PARAMETERS
-        #TODO: Add diffusion model configurations to experiment dict to be able to modify these values later
-        if args.use_vae:
-            if accelerator.is_main_process:
-                print_color("Training Diffusion model with VAE", "blue")
-            diffusion_trainer = TrainerDiffusion(args, model, diff_model, scheduler, accelerator, image_shape = dataset.get_image_shape(),learning_rate=args.lr, patch_size=args.patch_size)
-        else:
-            del model
-            if accelerator.is_main_process:
-                print_color("Training Diffusion model without VAE", "blue")
-            diffusion_trainer = TrainerDiffusionNonVAE(args, diff_model, scheduler, accelerator, patch_size=args.patch_size, image_shape = dataset.get_image_shape(), learning_rate=args.lr, len_train_data_loader=len(dataloader), num_epochs=args.diff_epochs)
+        from train_utils.trainers import TrainerDiffusion as train_diff
+        vae_model = train_pipeline_vae.get_model(with_accelerator=False)
+        #TODO: Add this model into the class and make sure to wrap it around accelerator.
+        if accelerator.is_main_process:
+            print_color("Training Diffusion model with VAE", "blue")
+        diffusion_trainer = train_diff(args, vae_model=vae_model, accelerator=accelerator,           input_shape=dataset.get_image_shape(), len_train_data_loader=len(dataloader))
+        model_config = diffusion_trainer.get_model_config()
+    
+
+    if args.diff:
+        from train_utils.trainers import TrainerDiffusionNonVAE as train_diff
+        if accelerator.is_main_process:
+            print_color("Training Diffusion model without VAE", "blue")
+        diffusion_trainer = train_diff(args, accelerator=accelerator,           input_shape=dataset.get_image_shape(), len_train_data_loader=len(dataloader))
+
         if accelerator.is_main_process:
             print_color(f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")
        
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
+        if accelerator.is_main_process:
+            model_config = diffusion_trainer.get_model_config()
 
     accelerator.wait_for_everyone()
+
     if accelerator.is_main_process:
         with open(os.path.join(directory, "config.json"), "w") as file:
             json.dump(model_config, file)

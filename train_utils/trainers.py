@@ -24,6 +24,7 @@ class BaseTrainer():
         self.accelerator = accelerator
         self.current_epoch = 0
         self.model = model
+        self.model_config = init_configure_model(args.model_name, args)
         
         self.optimizer = self._init_optimizer()
         assert len_dataloader is not None, "len_train_data_loader must be provided"
@@ -37,6 +38,7 @@ class BaseTrainer():
         # Prepare the model, optimizer, and scheduler with the accelerator
         self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
             self.model, self.optimizer, self.scheduler)
+        self.model_vae = self.model #TODO: FIX THIS VALUE
 
         # Initialize losses
         self.recons_loss = RECONS_LOSS[args.recons_loss]
@@ -60,9 +62,11 @@ class BaseTrainer():
         raise NotImplementedError("This method should be overridden by subclasses.")
     
     def _init_model(self):
-        model_config = init_configure_model(self.args)
-        model = MODELS[self.args.model_name](**model_config)
+        model = MODELS[self.args.model_name](**self.model_config)
         return model
+    
+    def get_model_config(self):
+        return self.model_config
  
     def _init_optimizer(self):
         optimizer = AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
@@ -95,6 +99,15 @@ class BaseTrainer():
             return epoch, loss
         else:
             raise FileNotFoundError(f"checkpoint.pt not found in {directory}")
+        
+    def save_vae(self, directory):
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        unwrapped_model.save_pretrained(
+        directory,
+        is_main_process=self.accelerator.is_main_process,
+        save_function=self.accelerator.save)
+
+
 
     def save_model(self, directory, epoch=None, loss=None):
         unwrapped_model = self.accelerator.unwrap_model(self.model)
@@ -127,6 +140,7 @@ class BaseTrainer():
             raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
         
         checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
+
         self.model.load_state_dict(checkpoint['model'])
         if 'ema_model' in checkpoint:
             self.ema_model.load_state_dict(checkpoint['ema_model'])
@@ -210,7 +224,6 @@ class TrainerVAE(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):
         super().__init__(args, accelerator, len_dataloader=len_dataloader)
 
-
     def run_train(self, data_loader, experiment_dict, directory):
         self.model.train()
         best_loss = float('inf')
@@ -289,8 +302,142 @@ class TrainerVAE(BaseTrainer):
             self.accelerator.wait_for_everyone()
 
 
+class TrainerDiffusionNonVAE(BaseTrainer):
+    def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
+        assert input_shape is not None, "input_shape must be provided"
+        super().__init__(model=init_configure_vit(
+            vit_size=args.vit_size,
+            patch_size=args.patch_size,
+            input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
+        ), args=args, accelerator=accelerator, len_dataloader=len_train_data_loader)
+        
+        ema_kwargs = dict() # TODO: Fix this line of code
 
-class TrainerDiffusion(BaseTrainer):
+        if self.is_main:
+            self.ema_model = EMA(
+                self.unwrap(self.model),
+                forward_method_names = ('sample',),
+                **ema_kwargs
+            )
+            # self.ema_model = self.accelerator.prepare(self.ema_model)
+            self.ema_model.to(self.accelerator.device)
+            
+        self.accelerator.wait_for_everyone()
+        
+
+    @staticmethod
+    def unwrap(model):
+        return model.module if hasattr(model, "module") else model
+    
+    def run_train(self, data_loader, experiment_dict, directory):
+
+        best_loss = float('inf')
+
+        self.model.train()
+        for epoch in range(self.args.diff_epochs if not self.args.test_pipeline else TEST_LEGNTH):
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
+            epoch_loss = 0.0
+            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
+                self.optimizer.zero_grad()
+                assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
+                # batch = batch.contiguous()
+                # batch = batch * 2 -1  # Normalize to [-1, 1]
+                loss_i = self.model(batch)
+                if i == 0 and epoch == 0 and self.accelerator.is_main_process:
+                    self._save_experiment_config(experiment_dict, directory)
+                
+                self.accelerator.backward(loss_i)
+
+                self.optimizer.step()
+                self.scheduler.step()
+                self.optimizer.zero_grad()
+                
+                if self.is_main:
+                    self.unwrap(self.ema_model).update()
+                # self.accelerator.wait_for_everyone()
+                # self.unwrap(self.ema_model).update()
+                self.accelerator.wait_for_everyone()
+                
+                epoch_loss += loss_i.item()
+            epoch_loss /= len(data_loader)
+            if self.accelerator.is_main_process:
+                print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
+            self.current_epoch +=1
+            # Saving Best model
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                if self.accelerator.is_main_process:
+                    print(f"New best loss: {best_loss}")
+                self.save(directory)
+
+            self.accelerator.wait_for_everyone()
+    
+        print('training complete')
+
+    def get_diff_model(self):
+        """
+        Returns the diffusion model.
+        """
+        return self.unwrap(self.model)
+    
+    @property
+    def is_main(self):
+        return self.accelerator.is_main_process
+
+    def save_diff(self, path):
+        if not self.is_main:
+            return
+
+        save_package = dict(
+            model = self.accelerator.unwrap_model(self.model).state_dict(),
+            ema_model = self.ema_model.state_dict(),
+            optimizer = self.accelerator.unwrap_model(self.optimizer).state_dict(),
+            scheduler = self.accelerator.unwrap_model(self.scheduler).state_dict(),
+            epoch = self.current_epoch,  # Save current epoch
+        )
+
+        torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
+
+    def save(self, path):
+        if not self.is_main:
+            return
+    
+        self.save_diff(path)
+        self.save_model()
+
+    def load_weights(self, directory):
+        """
+        Load the model weights from the specified directory.
+        """
+        if not os.path.exists(directory):
+            raise FileNotFoundError(f"Directory {directory} does not exist.")
+        
+        checkpoint_path = os.path.join(directory, "checkpoint.pt")
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
+        
+        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
+        self.model = self.accelerator.unwrap_model(self.model)
+        self.optimizer = self.accelerator.unwrap_model(self.optimizer)
+        self.scheduler = self.accelerator.unwrap_model(self.scheduler)
+        self.model.load_state_dict(checkpoint['model'])
+        if 'ema_model' in checkpoint: # this is not necessary for now
+            self.ema_model.load_state_dict(checkpoint['ema_model'])
+        if 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if 'scheduler' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
+
+        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
+            self.model, self.optimizer, self.scheduler
+        )
+        self.accelerator.wait_for_everyone()
+        
+
+
+class TrainerDiffusion(TrainerDiffusionNonVAE):
     def __init__(self, args, model,diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4, patch_size=16):
         super().__init__(args, model, None, scheduler, accelerator, recons_loss=None)
         
@@ -392,15 +539,13 @@ class TrainerDiffusion(BaseTrainer):
     
         print('training complete')
 
-    def get_diff_model(self):
-        """
-        Returns the diffusion model.
-        """
-        return self.unwrap(self.model)
     
-    @property
-    def is_main(self):
-        return self.accelerator.is_main_process
+    def get_vae_model(self):
+        """
+        Returns the VAE model.
+        """
+        return self.unwrap(self.model_vae)
+    
 
     def save(self, path):
         if not self.is_main:
@@ -413,144 +558,6 @@ class TrainerDiffusion(BaseTrainer):
         )
 
         torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
-
-
-    
-class TrainerDiffusionNonVAE(BaseTrainer):
-    def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
-        assert input_shape is not None, "input_shape must be provided"
-        super().__init__(model=init_configure_vit(
-            vit_size=args.vit_size,
-            patch_size=args.patch_size,
-            input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
-        ), args=args, accelerator=accelerator, len_dataloader=len_train_data_loader)
-        # self.optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-3)
-
-        # num_training_steps = len_train_data_loader * num_epochs
-        # warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
-
-        # self.scheduler = get_cosine_schedule_with_warmup(
-        #     self.optimizer,
-        #     num_warmup_steps=warmup_steps,
-        #     num_training_steps=num_training_steps
-        # )
-        # self.model, self.optimizer, self.scheduler = self.accelerator.prepare(self.model, self.optimizer, self.scheduler)
-        ema_kwargs = dict() # TODO: Fix this line of code
-
-        if self.is_main:
-            self.ema_model = EMA(
-                self.unwrap(self.model),
-                forward_method_names = ('sample',),
-                **ema_kwargs
-            )
-            # self.ema_model = self.accelerator.prepare(self.ema_model)
-            self.ema_model.to(self.accelerator.device)
-            
-        self.accelerator.wait_for_everyone()
-        
-
-    @staticmethod
-    def unwrap(model):
-        return model.module if hasattr(model, "module") else model
-    
-    def run_train(self, data_loader, experiment_dict, directory):
-
-        best_loss = float('inf')
-
-        self.model.train()
-        for epoch in range(self.args.diff_epochs if not self.args.test_pipeline else TEST_LEGNTH):
-            if self.accelerator.is_main_process:
-                print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
-            epoch_loss = 0.0
-            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
-                self.optimizer.zero_grad()
-                assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
-                # batch = batch.contiguous()
-                # batch = batch * 2 -1  # Normalize to [-1, 1]
-                loss_i = self.model(batch)
-                if i == 0 and epoch == 0 and self.accelerator.is_main_process:
-                    self._save_experiment_config(experiment_dict, directory)
-                
-                self.accelerator.backward(loss_i)
-
-                self.optimizer.step()
-                self.scheduler.step()
-                self.optimizer.zero_grad()
-                
-                if self.is_main:
-                    self.unwrap(self.ema_model).update()
-                # self.accelerator.wait_for_everyone()
-                # self.unwrap(self.ema_model).update()
-                self.accelerator.wait_for_everyone()
-                
-                epoch_loss += loss_i.item()
-            epoch_loss /= len(data_loader)
-            if self.accelerator.is_main_process:
-                print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
-        
-            # Saving Best model
-            if epoch_loss < best_loss:
-                best_loss = epoch_loss
-                if self.accelerator.is_main_process:
-                    print(f"New best loss: {best_loss}")
-                self.save(directory)
-
-            self.accelerator.wait_for_everyone()
-    
-        print('training complete')
-
-    def get_diff_model(self):
-        """
-        Returns the diffusion model.
-        """
-        return self.unwrap(self.model)
-    
-    @property
-    def is_main(self):
-        return self.accelerator.is_main_process
-
-    def save(self, path):
-        if not self.is_main:
-            return
-
-        save_package = dict(
-            model = self.accelerator.unwrap_model(self.model).state_dict(),
-            ema_model = self.ema_model.state_dict(),
-            optimizer = self.accelerator.unwrap_model(self.optimizer).state_dict(),
-            scheduler = self.accelerator.unwrap_model(self.scheduler).state_dict(),
-        )
-
-        torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
-
-    def load_weights(self, directory):
-        """
-        Load the model weights from the specified directory.
-        """
-        if not os.path.exists(directory):
-            raise FileNotFoundError(f"Directory {directory} does not exist.")
-        
-        checkpoint_path = os.path.join(directory, "checkpoint.pt")
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
-        
-        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
-        self.model = self.accelerator.unwrap_model(self.model)
-        self.optimizer = self.accelerator.unwrap_model(self.optimizer)
-        self.scheduler = self.accelerator.unwrap_model(self.scheduler)
-        self.model.load_state_dict(checkpoint['model'])
-        if 'ema_model' in checkpoint: # this is not necessary for now
-            self.ema_model.load_state_dict(checkpoint['ema_model'])
-        if 'optimizer' in checkpoint:
-            self.optimizer.load_state_dict(checkpoint['optimizer'])
-        if 'scheduler' in checkpoint:
-            self.scheduler.load_state_dict(checkpoint['scheduler'])
-
-        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
-            self.model, self.optimizer, self.scheduler
-        )
-        self.accelerator.wait_for_everyone()
-        
 
 
         
