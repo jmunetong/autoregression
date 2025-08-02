@@ -50,13 +50,12 @@ def get_args():
         help="Enable test pipeline (default: False)"
     )
 
-    # Arguments for variational autoencoder.
+    # VQ and VAE model parameters
     parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
     parser.add_argument("--annealing_shape", type=str, default="cosine", choices=["linear", "cosine", "logistic"], help="Shape of the annealing function")
-    parser.add_argument("--train_from_checkpoint", action="store_true", help="Train from a checkpoint")
-    parser.add_argument("--train_from_scratch", action="store_true", help="Train from scratch")
     parser.add_argument("--train_vae_from_checkpoint", action="store_true", help="Train VAE model from a checkpoint")
     parser.add_argument("--train_vae_from_scratch", action="store_true", help="Train VAE model from scratch")
+    parser.add_argument("--pretrained_vae_path", type=str, default=None, help="Path to pretrained VAE model")
 
 
     # Diffusion model arguments
@@ -98,6 +97,11 @@ def run(args):
         args.model_name,
         config=args_dict
     )
+    if args.train_vae_from_checkpoint and args.pretrained_vae_path is None:
+        raise ValueError("Please provide a path to the pretrained VAE model using --pretrained_vae_path")
+    
+    if args.train_diff_from_checkpoint and args.pretrained_diff_path is None:
+        raise ValueError("Please provide a path to the pretrained diffusion model using --pretrained_diff")
     
     if not args.diff or args.latent_diffisuion: 
         # Train a VAE or VQ model either for generative modeling or to train A vae model for latent diffusion.
@@ -107,14 +111,12 @@ def run(args):
         else:
             from train_utils.trainers import TrainerVQ as trainer
         trainer_vae = trainer(args, accelerator,len_dataloader)
-    
-    
-        if args.train_vae_from_checkpoint or args.inference: #TODO: FIX THE INFERENCE PARAMETER 
+        if args.train_vae_from_checkpoint or args.inference: #TODO: FIX THE INFERENCE PARAMETER
             loading_directory = args.pretrained_vae
             print_color(f"Loaded VAE model from {loading_directory if loading_directory else 'default path'}", "blue")
             trainer_vae.load_model(loading_directory)
 
-        if args.train_vae_from_scratch or args.train_vae_from_checkpoint:
+        if (args.train_vae_from_scratch or args.train_vae_from_checkpoint) and not args.inference:
             if accelerator.is_main_process:
                 print_color("Training VAE model", "blue")
             trainer_vae.run_train(dataloader, experiment_dict, directory)
@@ -186,9 +188,9 @@ def run(args):
         generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
     else:
         #TODO: MAKE THE INFERENCE GENERATION BE ACROSS EACH GPU.
-        samples = args.num_samples if args.num_samples > 0 else 10
+        
         if accelerator.is_main_process:
-            print_color(f"Generating {samples} samples with diffusion model", "blue")
+            print_color(f"Generating {args.num_samples} samples with diffusion model", "blue")
         min_pixel, max_pixel = dataset.get_min_max()
         #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
 
