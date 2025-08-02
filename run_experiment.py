@@ -10,7 +10,8 @@ from torch.utils.data import DataLoader
 
 from train_utils.configs import *
 
-from utils import print_color, prepare_state_dict, generate_vae_samples, generate_diff_samples
+from utils import print_color, prepare_state_dict
+from plot import generate_vae_samples, generate_diff_samples
 from data_preprocessing import XrdDataset
 
 
@@ -78,7 +79,7 @@ def run(args):
     # Dataset and Dataloader
     dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
 
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, )
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     len_dataloader = len(dataloader)
     dataloader = accelerator.prepare(dataloader)
     
@@ -108,7 +109,7 @@ def run(args):
         else:
             loading_directory = None
             trainer_vae.load_model(loading_directory)
-            logging.info(f"Loaded model from {loading_directory if loading_directory else 'default path'}")
+            # logging.info(f"Loaded model from {loading_directory if loading_directory else 'default path'}")
         if accelerator.is_main_process:
             model_config = trainer_vae.get_model_config()
 
@@ -149,6 +150,16 @@ def run(args):
     torch.cuda.empty_cache()
 
     #TODO: MAKE SURE THAT WE ARE GENERATING IMAGES SAMPLES BASED ON THE NUMBER OF GPUS
+    #### This is to make sure we have a given number of samples per GPU
+    rank = accelerator.process_index # gpu rank
+    world_size = accelerator.num_processes # total number of gpus
+    per_rank = (args.num_samples + world_size - 1) // world_size # number of samples per gpu
+    start = rank * per_rank
+    end = min(start + per_rank, args.num_samples)
+    accelerator.wait_for_everyone()
+    idx_list = list(range(start, end))
+
+
     if not args.diff or not args.latent_diff:
         generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
     else:
@@ -159,11 +170,11 @@ def run(args):
         min_pixel, max_pixel = dataset.get_min_max()
         #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
 
-        generate_diff_samples(diffusion_trainer.get_model().eval(),  directory,samples, diffusion_trainer.encoding_shape, diffusion_trainer.image_shape, min_pixel, max_pixel, args.use_vae)
+        generate_diff_samples(diffusion_trainer.get_model().eval(),  directory, idx_list=idx_list, encoding_shape=diffusion_trainer.encoding_shape, image_shape=diffusion_trainer.image_shape, min_pixel=min_pixel, max_pixel=max_pixel, use_vae=args.use_vae)
 
         if args.use_vae:
             print_color("Generating samples with VAE", "blue")
-            generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
+            generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory, idx_list=idx_list)
         # generate_vae_samples(trainer_vae.get_model(), dataloader, directory)
 
     accelerator.end_training()

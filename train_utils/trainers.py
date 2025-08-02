@@ -267,7 +267,6 @@ class TrainerVAE(BaseTrainer):
                 recon_loss_i = self.recons_loss(recon_i, batch)
                 loss_i = beta_recons * recon_loss_i + kl_loss_i 
         
-                
                 self.accelerator.backward(loss_i)
                 
                 # Step optimizer after accumulating gradients
@@ -548,16 +547,25 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
     
 
     def save(self, path):
-        if not self.is_main:
-            return
+        super().save(path)
+        unwrapped_model = self.accelerator.unwrap_model(self.vae_model)
+        unwrapped_model.save_pretrained(
+        path,
+        is_main_process=self.accelerator.is_main_process,
+        save_function=self.accelerator.save)
+        del unwrapped_model
 
-        save_package = dict(
-            model = self.accelerator.unwrap_model(self.model).state_dict(),
-            ema_model = self.ema_model.state_dict(),
-            optimizer = self.accelerator.unwrap_model(self.optimizer).state_dict(),
-        )
 
-        torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
+    def load_weights(self, directory):
+        super().load_weights(directory)
+        # 1. Load model weights (after .prepare, so we can unwrap)
+        self.model_vae = self.accelerator.unwrap_model(self.model_vae)
+        self.vae_model.load_pretrained(directory)
+        self.model_vae.eval()
+        self.vae_model = self.accelerator.prepare(self.vae_model)
+       
+
+    
 
 
         

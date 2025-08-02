@@ -4,6 +4,41 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+def generate_vae_samples(model, dataloader, directory, idx_list):
+    count = 0
+    n_samples = len(idx_list)
+    while count < n_samples:
+        batch = next(iter(dataloader))
+        for i in range(batch.shape[0]):
+            recons = model(batch[i].unsqueeze(0), return_dict=True).sample
+            plot_reconstruction(batch[i], recons, idx=idx_list[count], directory=directory)
+            count += 1
+            del recons
+            if count >= n_samples:
+                break
+
+def generate_diff_samples(model, diff_model, directory, idx_list, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
+    for i in idx_list:
+        batch = diff_model.sample(batch_size=1)
+        plot_fn = plot_output_vae if use_vae else plot_non_vae
+        plot_fn(model, batch, i, directory, min_pixel, max_pixel)
+
+def plot_non_vae(model, batch, i, directory, min_pixel, max_pixel):
+    min_pixel = np.percentile(transform_to_image(batch), 1)
+    max_pixel = np.percentile(transform_to_image(batch), 99)
+    plot_diff(batch, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
+
+def plot_output_vae(model, batch, i, directory, min_pixel, max_pixel):
+    out = model.decode(batch.unsqueeze(0), return_dict=True).sample
+    min_pixel = np.percentile(transform_to_image(out), 1)
+    max_pixel = np.percentile(transform_to_image(out), 99)
+    out = out[0]
+    if out.dim() == 3:
+        out = out.unsqueeze(0)
+    plot_diff(out, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
+
+
+
 def transform_to_image(tensor):
     if isinstance(tensor, torch.Tensor):
         tensor = tensor.detach().cpu().numpy()

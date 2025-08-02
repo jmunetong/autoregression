@@ -158,38 +158,6 @@ def prepare_state_dict(args, accelerator):
 def diff_name_config(use_vae, args):
     return f"diff_{args.model_name}" if use_vae else f"diff_non_vae_{args.model_name}"
 
-def generate_vae_samples(model, dataloader, directory):
-    count = 0
-    for i, batch in enumerate(dataloader):
-        if i > 2:
-            break
-        for j in range(batch.shape[0]):
-            recons = model(batch[j].unsqueeze(0), return_dict=True).sample
-            plot_reconstruction(batch[j],recons, idx=count, directory=directory)
-            count += 1
-            del recons
-            if count > 5:
-                break
-
-def generate_diff_samples(model, diff_model, directory, count=1, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
-    for i in range(count):
-        batch = diff_model.sample(batch_size=1)
-        plot_fn = plot_output_vae if use_vae else plot_non_vae
-        plot_fn(model, batch, i, directory, min_pixel, max_pixel)
-
-def plot_non_vae(model, batch, i, directory, min_pixel, max_pixel):
-    min_pixel = np.percentile(transform_to_image(batch), 1)
-    max_pixel = np.percentile(transform_to_image(batch), 99)
-    plot_diff(batch, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
-
-def plot_output_vae(model, batch, i, directory, min_pixel, max_pixel):
-    out = model.decode(batch.unsqueeze(0), return_dict=True).sample
-    min_pixel = np.percentile(transform_to_image(out), 1)
-    max_pixel = np.percentile(transform_to_image(out), 99)
-    out = out[0]
-    if out.dim() == 3:
-        out = out.unsqueeze(0)
-    plot_diff(out, directory, idx=i, min_pixel=min_pixel, max_pixel=max_pixel)
 
 def configure_training(args, model_name_dir, accelerator):
         # Step 1: Main process creates directory and metadata
