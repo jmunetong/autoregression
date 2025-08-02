@@ -53,19 +53,28 @@ def get_args():
     # Arguments for variational autoencoder.
     parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
     parser.add_argument("--annealing_shape", type=str, default="cosine", choices=["linear", "cosine", "logistic"], help="Shape of the annealing function")
-    
+    parser.add_argument("--train_from_checkpoint", action="store_true", help="Train from a checkpoint")
+    parser.add_argument("--train_from_scratch", action="store_true", help="Train from scratch")
+    parser.add_argument("--train_vae_from_checkpoint", action="store_true", help="Train VAE model from a checkpoint")
+    parser.add_argument("--train_vae_from_scratch", action="store_true", help="Train VAE model from scratch")
+
+
     # Diffusion model arguments
     parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
     parser.add_argument("--latent_diffisuion", action="store_true", help="Use latent diffusion model")
     parser.add_argument("--use_vae", action='store_true', help="Use VAE model for diffusion training")
+    parser.add_argument("--train_diff_from_checkpoint", action="store_true", help="Train diffusion model from a checkpoint")
+    parser.add_argument("--train_diff_from_scratch", action="store_true", help="Train diffusion model from scratch")
+    parser.add_argument("--pretrained_diff", type=str, default=None, help="Path to pretrained diffusion model")
+    parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model") #TODO: REMOVE THIS ARGUMENT. Modify it in its correct place
 
-    parser.add_argument("--pretrained_vae", type=str, default=None, help="Path to pretrained VAE model")
     parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
     parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
     parser.add_argument("--vit_size", type=str, default="base", choices=["base", "large", "huge"], help="Size of the VIT model")
     parser.add_arugment("--patch_size", type=int, default=16, help="Patch size for the VIT model")
 
     # Inference parameters #TODO: Complete this part for running inference values
+    parser.add_argument("--inference", action="store_true", help="Run inference on the trained model")
     parser.add_argument("--generate_samples", "-gs", action="store_true", help="Generate samples after training")
     parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to generate")
     
@@ -98,17 +107,22 @@ def run(args):
         else:
             from train_utils.trainers import TrainerVQ as trainer
         trainer_vae = trainer(args, accelerator,len_dataloader)
-        trainer_vae.run_train(dataloader, experiment_dict, directory) #TODO: TAKE THIS OUT OF THIS IF LOOP STATEMENT.
     
-        # This trains the VAE model #TODO: THIS MUST BE TAKEN OUTB OF THIS INNER LOOP:
-        # - Reasons (continued training, different model, etc.)
-        if args.train_vae:
+    
+        if args.train_vae_from_checkpoint or args.inference: #TODO: FIX THE INFERENCE PARAMETER 
+            loading_directory = args.pretrained_vae
+            print_color(f"Loaded VAE model from {loading_directory if loading_directory else 'default path'}", "blue")
+            trainer_vae.load_model(loading_directory)
+
+        if args.train_vae_from_scratch or args.train_vae_from_checkpoint:
             if accelerator.is_main_process:
                 print_color("Training VAE model", "blue")
-            trainer_vae.run_train(dataloader, experiment_dict, directory)
+
         else:
-            loading_directory = None
-            trainer_vae.load_model(loading_directory)
+            if accelerator.is_main_process:
+                print_color("Skipping VAE training", "yellow")
+                print_color("Jumping to inference generation for VAE model", "yellow")
+          
             # logging.info(f"Loaded model from {loading_directory if loading_directory else 'default path'}")
         if accelerator.is_main_process:
             model_config = trainer_vae.get_model_config()
@@ -117,12 +131,10 @@ def run(args):
     if args.latent_diff:
         from train_utils.trainers import TrainerDiffusion as train_diff
         vae_model = trainer_vae.get_model(with_accelerator=False)
-        #TODO: Add this model into the class and make sure to wrap it around accelerator.
-        if accelerator.is_main_process:
-            print_color("Training Diffusion model with VAE", "blue")
+        
         diffusion_trainer = train_diff(args, vae_model=vae_model, accelerator=accelerator,           input_shape=dataset.get_image_shape(), len_train_data_loader=len(dataloader))
         model_config = diffusion_trainer.get_model_config()
-    
+        
 
     if args.diff:
         from train_utils.trainers import TrainerDiffusionNonVAE as train_diff
@@ -132,7 +144,15 @@ def run(args):
 
         if accelerator.is_main_process:
             print_color(f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")
-       
+
+    if args.train_diff_from_checkpoint or args.inference:
+        loading_directory = args.pretrained_diff #TODO: ADD THIS ARGUMENT
+        if accelerator.is_main_process:
+            print_color(f"Loaded Diffusion model from {loading_directory if loading_directory else 'default path'}", "blue")
+    
+    if args.train_diff_from_checkpoint or args.train_diff_from_scratch:
+        #todo: directory needs to change 
+        directory = loading_directory if not args.train_diff_from_scratch else directory
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
         if accelerator.is_main_process:
             model_config = diffusion_trainer.get_model_config()
@@ -149,7 +169,6 @@ def run(args):
         
     torch.cuda.empty_cache()
 
-    #TODO: MAKE SURE THAT WE ARE GENERATING IMAGES SAMPLES BASED ON THE NUMBER OF GPUS
     #### This is to make sure we have a given number of samples per GPU
     rank = accelerator.process_index # gpu rank
     world_size = accelerator.num_processes # total number of gpus
@@ -159,7 +178,13 @@ def run(args):
     accelerator.wait_for_everyone()
     idx_list = list(range(start, end))
 
+    accelerator.end_training()
 
+    # Inference generation
+    if not args.inference or not args.generate_samples:
+        print_color("Skipping inference generation", "yellow")
+        return
+    
     if not args.diff or not args.latent_diff:
         generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
     else:
@@ -177,7 +202,7 @@ def run(args):
             generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory, idx_list=idx_list)
         # generate_vae_samples(trainer_vae.get_model(), dataloader, directory)
 
-    accelerator.end_training()
+
     
 
 
