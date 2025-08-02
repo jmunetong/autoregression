@@ -117,6 +117,7 @@ def run(args):
         if args.train_vae_from_scratch or args.train_vae_from_checkpoint:
             if accelerator.is_main_process:
                 print_color("Training VAE model", "blue")
+            trainer_vae.run_train(dataloader, experiment_dict, directory)
 
         else:
             if accelerator.is_main_process:
@@ -150,7 +151,7 @@ def run(args):
         if accelerator.is_main_process:
             print_color(f"Loaded Diffusion model from {loading_directory if loading_directory else 'default path'}", "blue")
     
-    if args.train_diff_from_checkpoint or args.train_diff_from_scratch:
+    if (args.train_diff_from_checkpoint or args.train_diff_from_scratch) and not args.inference:
         #todo: directory needs to change 
         directory = loading_directory if not args.train_diff_from_scratch else directory
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
@@ -181,10 +182,6 @@ def run(args):
     accelerator.end_training()
 
     # Inference generation
-    if not args.inference or not args.generate_samples:
-        print_color("Skipping inference generation", "yellow")
-        return
-    
     if not args.diff or not args.latent_diff:
         generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
     else:
