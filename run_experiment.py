@@ -66,16 +66,13 @@ def get_args():
     # Diffusion model arguments
     parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
     parser.add_argument("--latent_diffisuion", action="store_true", help="Use latent diffusion model")
-    # parser.add_argument("--use_vae", action='store_true', help="Use VAE model for diffusion training")
     parser.add_argument("--train_diff_from_checkpoint", action="store_true", help="Train diffusion model from a checkpoint")
     parser.add_argument("--train_diff_from_scratch", action="store_true", help="Train diffusion model from scratch")
     parser.add_argument("--pretrained_diff_path", type=str, default=None, help="Path to pretrained diffusion model")
     parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
     parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
     parser.add_argument("--vit_size", type=str, default="base", choices=["base", "large", "huge"], help="Size of the VIT model")
-    parser.add_argument("--patch_size", type=int, default=16, help="Patch size for the VIT model")
-
-
+        # parser.add_argument("--use_vae", action='store_true', help="Use VAE model for diffusion training")
     
     args = parser.parse_args()
     return args

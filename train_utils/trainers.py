@@ -14,7 +14,7 @@ import torch
 from transformers import get_cosine_schedule_with_warmup
 from torch.optim import AdamW
 
-from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model, init_configure_vit
+from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model, init_configure_diffusion
 
 TEST_LEGNTH = 1
 
@@ -304,7 +304,7 @@ class TrainerVAE(BaseTrainer):
 class TrainerDiffusionNonVAE(BaseTrainer):
     def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
         assert input_shape is not None, "input_shape must be provided"
-        super().__init__(model=init_configure_vit(
+        super().__init__(model=init_configure_diffusion(
             vit_size=args.vit_size,
             patch_size=args.patch_size,
             input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
@@ -436,26 +436,41 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         
 
 
+#  def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
+#         assert input_shape is not None, "input_shape must be provided"
+#         super().__init__(model=init_configure_vit(
+#             vit_size=args.vit_size,
+#             patch_size=args.patch_size,
+#             input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
+#         ), args=args, accelerator=accelerator, len_dataloader=len_train_data_loader)
+        
+#         ema_kwargs = dict() # TODO: Fix this line of code
+
+#         if self.is_main:
+#             self.ema_model = EMA(
+#                 self.unwrap(self.model),
+#                 forward_method_names = ('sample',),
+#                 **ema_kwargs
+#             )
+#             # self.ema_model = self.accelerator.prepare(self.ema_model)
+#             self.ema_model.to(self.accelerator.device)
+            
+#         self.accelerator.wait_for_everyone()
+
 class TrainerDiffusion(TrainerDiffusionNonVAE):
-    def __init__(self, args, model,diff_model, scheduler, accelerator,image_shape, learning_rate=1e-4, patch_size=16):
-        super().__init__(args, model, None, scheduler, accelerator, recons_loss=None)
+    def __init__(self, args, vae_model,  accelerator, len_train_data_loader=None, input_shape=None):
+     
+        self.model_vae = self.accelerator.prepare(self.model_vae)  
+        self.image_shape = input_shape
         
-        ## ALL THIS THINGS NEED TO HAPPEN BEFORE WE ARE ABLE TO RUN THE MODEL
-        self.model_vae = self.unwrap(model)
-        model_dim = dict(
-        dim = 1024,
-        depth = 12,
-        heads = 12) #TODO: Add experiment parameters for these values
-        self.patch_size = patch_size # TODO: Add experiment parameters for this value (first experiment we tried 16)
-        self.image_shape = (1, *image_shape)
-        
-        self._get_prediction_shape_image()
-        self.model = diff_model(model=model_dim, image_size = self.encoding_shape[-1], patch_size = self.patch_size)
-        self.optimizer = AdamW(model.parameters(), lr = learning_rate)
-        self.encoding_shape = None
-        
-        self.model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
-        
+        # self.image_shape = (1, *image_shape)
+        if accelerator.is_main_process:
+            encoding_shape = self._get_prediction_shape_image()
+        else:
+            encoding_shape = None
+        self.encoding_shape = accelerator.broadcast_object(encoding_shape, src=0)
+        super().__init__(args, accelerator, len_train_data_loader=len_train_data_loader, input_shape=self.encoding_shape[-1])
+              
         ema_kwargs = dict() # TODO: Fix this line of code
 
         if self.is_main:
@@ -482,7 +497,7 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         self.model_vae.eval()
         with torch.no_grad():
             out = self.model_vae.encode(sample).latent_dist.sample()
-        self.encoding_shape = out.shape[1:]
+        return out.shape[1:]
 
     
     @staticmethod

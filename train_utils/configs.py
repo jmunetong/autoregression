@@ -85,6 +85,6 @@ def init_configure_model(args):
         raise ValueError(f"Unknown model name: {args.model_name}")
 
 
-def init_configure_vit(vit_size, patch_size, input_shape):
+def init_configure_diffusion(vit_size, patch_size, input_shape):
     model_dim = VIT_MODELS[vit_size]
     return diff_model(model=model_dim, image_size=input_shape[-1], patch_size=patch_size)
