@@ -2,7 +2,6 @@ from diffusers import AutoencoderKL, VQModel
 import torch.nn as nn
 
 from train_utils.losses import IntensityWeightedMSELoss
-from train_utils.trainers import TrainerVAE, TrainerVQ
 from models.diff.autoregressive_diffusion import ImageAutoregressiveDiffusion as diff_model
 
 FEATURE_EXTRACTOR_PATH = "google/vit-base-patch16-224"
@@ -83,6 +82,10 @@ def init_configure_model(args):
         return vq_config_dict(args)
     else:
         raise ValueError(f"Unknown model name: {args.model_name}")
+    
+def init_configure_vae(args):
+    model = MODELS[args.model_name](**init_configure_model(args))
+    return model
 
 
 def init_configure_diffusion(vit_size, patch_size, input_shape):

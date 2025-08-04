@@ -20,11 +20,9 @@ TEST_LEGNTH = 1
 
 class BaseTrainer():
     def __init__(self, model, args,  accelerator, len_dataloader=None):
-        self.args = args
         self.accelerator = accelerator
         self.current_epoch = 0
         self.model = model
-        self.model_config = init_configure_model(args.model_name, args)
         
         self.optimizer = self._init_optimizer()
         assert len_dataloader is not None, "len_train_data_loader must be provided"
@@ -60,10 +58,6 @@ class BaseTrainer():
         Run the training loop for the model.
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
-    
-    def _init_model(self):
-        model = MODELS[self.args.model_name](**self.model_config)
-        return model
     
     def get_model_config(self):
         return self.model_config
@@ -108,7 +102,6 @@ class BaseTrainer():
         save_function=self.accelerator.save)
 
 
-
     def save_model(self, directory, epoch=None, loss=None):
         unwrapped_model = self.accelerator.unwrap_model(self.model)
         unwrapped_model.save_pretrained(
@@ -150,6 +143,8 @@ class BaseTrainer():
 
 class TrainerVQ(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):
+        self.args = args
+        self.model_config = init_configure_model(args)
         super().__init__(model=self._init_model(), args=args, accelerator=accelerator, len_dataloader=len_dataloader)
 
     def run_train(self, data_loader, experiment_dict, directory):
@@ -202,8 +197,7 @@ class TrainerVQ(BaseTrainer):
 
                 
                 # Step optimizer after accumulating gradients
-                
-                
+                self.optimizer.zero_grad()
             # Update epoch metrics with batch averages
             epoch_loss /= len(data_loader)
             epoch_recon_loss /= len(data_loader)
@@ -218,11 +212,20 @@ class TrainerVQ(BaseTrainer):
                 print(f"New best loss: {best_loss}")
                 self.save_model(directory)
             self.accelerator.wait_for_everyone()
-
+    
+    def _init_model(self):
+        assert self.args.model_name.startswith("vq"), "Model name must start with 'vq' for VQTrainer"
+        model = MODELS[self.args.model_name](**self.model_config)
+        return model
 
 class TrainerVAE(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):
-        super().__init__(args, accelerator, len_dataloader=len_dataloader)
+        self.args = args
+        self.model_config = init_configure_model(args)
+        super().__init__(model=self._init_model(), 
+                         args=args, 
+                         accelerator=accelerator, 
+                         len_dataloader=len_dataloader)
 
     def run_train(self, data_loader, experiment_dict, directory):
         self.model.train()
@@ -300,6 +303,10 @@ class TrainerVAE(BaseTrainer):
                 self.save_model(directory)
             self.accelerator.wait_for_everyone()
 
+    def _init_model(self):
+        assert self.args.model_name.startswith("vae"), "Model name must start with 'vae' for VAETrainer"
+        model = MODELS[self.args.model_name](**self.model_config)
+        return model
 
 class TrainerDiffusionNonVAE(BaseTrainer):
     def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
@@ -436,27 +443,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         
 
 
-#  def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
-#         assert input_shape is not None, "input_shape must be provided"
-#         super().__init__(model=init_configure_vit(
-#             vit_size=args.vit_size,
-#             patch_size=args.patch_size,
-#             input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
-#         ), args=args, accelerator=accelerator, len_dataloader=len_train_data_loader)
-        
-#         ema_kwargs = dict() # TODO: Fix this line of code
-
-#         if self.is_main:
-#             self.ema_model = EMA(
-#                 self.unwrap(self.model),
-#                 forward_method_names = ('sample',),
-#                 **ema_kwargs
-#             )
-#             # self.ema_model = self.accelerator.prepare(self.ema_model)
-#             self.ema_model.to(self.accelerator.device)
-            
-#         self.accelerator.wait_for_everyone()
-
 class TrainerDiffusion(TrainerDiffusionNonVAE):
     def __init__(self, args, vae_model,  accelerator, len_train_data_loader=None, input_shape=None):
      
@@ -469,6 +455,7 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         else:
             encoding_shape = None
         self.encoding_shape = accelerator.broadcast_object(encoding_shape, src=0)
+        del encoding_shape
         super().__init__(args, accelerator, len_train_data_loader=len_train_data_loader, input_shape=self.encoding_shape[-1])
               
         ema_kwargs = dict() # TODO: Fix this line of code

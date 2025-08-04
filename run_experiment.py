@@ -65,7 +65,7 @@ def get_args():
 
     # Diffusion model arguments
     parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
-    parser.add_argument("--latent_diffisuion", action="store_true", help="Use latent diffusion model")
+    parser.add_argument("--latent_diff", action="store_true", help="Use latent diffusion model")
     parser.add_argument("--train_diff_from_checkpoint", action="store_true", help="Train diffusion model from a checkpoint")
     parser.add_argument("--train_diff_from_scratch", action="store_true", help="Train diffusion model from scratch")
     parser.add_argument("--pretrained_diff_path", type=str, default=None, help="Path to pretrained diffusion model")
@@ -101,7 +101,7 @@ def run(args):
         raise ValueError("Please provide a path to the pretrained diffusion model using --pretrained_diff")
     
     
-    if not args.diff or args.latent_diffisuion: 
+    if not args.diff or args.latent_diff: 
         # Train a VAE or VQ model either for generative modeling or to train A vae model for latent diffusion.
         print_main(accelerator, f"Running experiment {model_id} with model {args.model_name}", "blue")
         if args.model_name == "vae_kl":
@@ -115,7 +115,7 @@ def run(args):
             trainer_vae.load_model(loading_directory)
 
         if (args.train_vae_from_scratch or args.train_vae_from_checkpoint) and not args.inference:
-            directory = loading_directory if not args.pretrained_vae_path else directory
+            directory = loading_directory if args.pretrained_vae_path else directory
             print_main(accelerator, f"Training VAE model with {len(dataloader)} batches", "blue")
             trainer_vae.run_train(dataloader, experiment_dict, directory)
 
@@ -147,7 +147,7 @@ def run(args):
 
     if (args.train_diff_from_checkpoint or args.train_diff_from_scratch) and not args.inference:
         #todo: directory needs to change
-        directory = loading_directory if not args.pretrained_diff_path else directory
+        directory = loading_directory if args.pretrained_diff_path else directory
         diffusion_trainer.run_train(dataloader, experiment_dict, directory)
         if accelerator.is_main_process:
             model_config = diffusion_trainer.get_model_config()
@@ -177,7 +177,7 @@ def run(args):
 
     # Inference generation
     if not args.diff or not args.latent_diff:
-        generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory)
+        generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory, idx_list=idx_list)
     else:
         #TODO: MAKE THE INFERENCE GENERATION BE ACROSS EACH GPU.
         
