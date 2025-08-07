@@ -1,5 +1,6 @@
 import os
 from pyexpat import model
+import copy 
 
 import yaml
 import torch
@@ -18,6 +19,21 @@ from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model, init_
 
 TEST_LEGNTH = 1
 
+
+class EMA:
+    def __init__(self, model, decay):
+        self.ema_model = copy.deepcopy(model)
+        self.decay = decay
+        self.ema_model.requires_grad_(False)  # Don't backprop EMA model
+
+    @torch.no_grad()
+    def update(self, model):
+        for ema_param, model_param in zip(self.ema_model.parameters(), model.parameters()):
+            ema_param.data = self.decay * ema_param.data + (1. - self.decay) * model_param.data
+
+        for ema_buf, model_buf in zip(self.ema_model.buffers(), model.buffers()):
+            ema_buf.copy_(model_buf)
+
 class BaseTrainer():
     def __init__(self, model, args,  accelerator, len_dataloader=None):
         self.accelerator = accelerator
@@ -25,7 +41,7 @@ class BaseTrainer():
         self.model = model
         
         self.optimizer = self._init_optimizer()
-        assert len_dataloader is not None, "len_train_data_loader must be provided"
+        assert len_dataloader is not None, "len_train_train_dataloader must be provided"
 
         # Scheduler parameters
         num_training_steps = len_dataloader * args.num_epochs
@@ -53,7 +69,7 @@ class BaseTrainer():
     def get_model(self, with_accelerator=True):
         return self.model if with_accelerator else self.accelerator.unwrap_model(self.model)
 
-    def run_trainer(self, data_loader, experiment_dict, directory):
+    def run_trainer(self, train_dataloader, experiment_dict, directory):
         """
         Run the training loop for the model.
         """
@@ -147,7 +163,7 @@ class TrainerVQ(BaseTrainer):
         self.model_config = init_configure_model(args)
         super().__init__(model=self._init_model(), args=args, accelerator=accelerator, len_dataloader=len_dataloader)
 
-    def run_train(self, data_loader, experiment_dict, directory):
+    def run_train(self, train_dataloader, val_datalaoder, experiment_dict, directory):
         best_loss = float('inf')
         beta_recons = self.args.beta_recons
         for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
@@ -155,8 +171,9 @@ class TrainerVQ(BaseTrainer):
                 print(f"Epoch {epoch+1}/{self.args.num_epochs}")    
             epoch_loss = 0.0
             epoch_recon_loss = 0.0
+            epoch_val_loss = 0.0
 
-            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):
+            for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):
                 # Important before starting one forward pass
                 self.optimizer.zero_grad()
                 batch = batch.contiguous()
@@ -192,15 +209,15 @@ class TrainerVQ(BaseTrainer):
 
                 epoch_recon_loss += recon_loss_i.item()
                 if self.accelerator.is_main_process:
-                    tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                    tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(train_dataloader)} - Loss: {loss_i.item():.4f}")
                 del recon_loss_i, recons
 
                 
                 # Step optimizer after accumulating gradients
                 self.optimizer.zero_grad()
             # Update epoch metrics with batch averages
-            epoch_loss /= len(data_loader)
-            epoch_recon_loss /= len(data_loader)
+            epoch_loss /= len(train_dataloader)
+            epoch_recon_loss /= len(train_dataloader)
             self.current_epoch += 1
             
             print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
@@ -227,7 +244,7 @@ class TrainerVAE(BaseTrainer):
                          accelerator=accelerator, 
                          len_dataloader=len_dataloader)
 
-    def run_train(self, data_loader, experiment_dict, directory):
+    def run_train(self, train_dataloader, experiment_dict, directory):
         self.model.train()
         best_loss = float('inf')
         beta_recons = self.args.beta_recons
@@ -239,7 +256,7 @@ class TrainerVAE(BaseTrainer):
             epoch_kl_loss = 0.0
             epoch_recon_loss = 0.0
 
-            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):
+            for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):
                 # Important before starting one forward pass
                 self.optimizer.zero_grad()
                 batch = batch.contiguous()
@@ -281,13 +298,13 @@ class TrainerVAE(BaseTrainer):
                 epoch_loss += loss_i.item()
                 epoch_kl_loss += kl_loss_i.item()
                 epoch_recon_loss += recon_loss_i.item()
-                tqdm.write(f"Epoch {epoch + 1} - Batch {i+1}/{len(data_loader)} - Loss: {loss_i.item():.4f}")
+                tqdm.write(f"Epoch {epoch + 1} - Batch {i+1}/{len(train_dataloader)} - Loss: {loss_i.item():.4f}")
                 
                 
             # Update epoch metrics with batch averages
-            epoch_loss /= len(data_loader)
-            epoch_kl_loss /= len(data_loader)
-            epoch_recon_loss /= len(data_loader)
+            epoch_loss /= len(train_dataloader)
+            epoch_kl_loss /= len(train_dataloader)
+            epoch_recon_loss /= len(train_dataloader)
             self.current_epoch += 1
             
 
@@ -309,13 +326,13 @@ class TrainerVAE(BaseTrainer):
         return model
 
 class TrainerDiffusionNonVAE(BaseTrainer):
-    def __init__(self, args, accelerator, len_train_data_loader=None, input_shape=None):
+    def __init__(self, args, accelerator, len_train_train_dataloader=None, input_shape=None):
         assert input_shape is not None, "input_shape must be provided"
         super().__init__(model=init_configure_diffusion(
             vit_size=args.vit_size,
             patch_size=args.patch_size,
             input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
-        ), args=args, accelerator=accelerator, len_dataloader=len_train_data_loader)
+        ), args=args, accelerator=accelerator, len_dataloader=len_train_train_dataloader)
         
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -335,7 +352,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     def unwrap(model):
         return model.module if hasattr(model, "module") else model
     
-    def run_train(self, data_loader, experiment_dict, directory):
+    def run_train(self, train_dataloader, experiment_dict, directory):
 
         best_loss = float('inf')
 
@@ -344,7 +361,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
             epoch_loss = 0.0
-            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
+            for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):          
                 self.optimizer.zero_grad()
                 assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
                 # batch = batch.contiguous()
@@ -366,7 +383,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 self.accelerator.wait_for_everyone()
                 
                 epoch_loss += loss_i.item()
-            epoch_loss /= len(data_loader)
+            epoch_loss /= len(train_dataloader)
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
@@ -444,7 +461,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
 
 
 class TrainerDiffusion(TrainerDiffusionNonVAE):
-    def __init__(self, args, vae_model,  accelerator, len_train_data_loader=None, input_shape=None):
+    def __init__(self, args, vae_model,  accelerator, len_train_train_dataloader=None, input_shape=None):
      
         self.model_vae = self.accelerator.prepare(self.model_vae)  
         self.image_shape = input_shape
@@ -456,7 +473,7 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
             encoding_shape = None
         self.encoding_shape = accelerator.broadcast_object(encoding_shape, src=0)
         del encoding_shape
-        super().__init__(args, accelerator, len_train_data_loader=len_train_data_loader, input_shape=self.encoding_shape[-1])
+        super().__init__(args, accelerator, len_train_train_dataloader=len_train_train_dataloader, input_shape=self.encoding_shape[-1])
               
         ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -491,7 +508,7 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
     def unwrap(model):
         return model.module if hasattr(model, "module") else model
     
-    def run_train(self, data_loader, experiment_dict, directory):
+    def run_train(self, train_dataloader, experiment_dict, directory):
 
         best_loss = float('inf')
         # self.model_vae.eval()
@@ -502,7 +519,7 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
             epoch_loss = 0.0
-            for i, batch in tqdm(enumerate(data_loader), total=len(data_loader), desc="Training"):          
+            for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):          
                 # Decoding step
                 self.model.train()
                 latents = self.model_vae.encode(batch).latent_dist.sample()
