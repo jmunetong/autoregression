@@ -19,5 +19,6 @@ done
 
 echo "✅ Successfully ran all experiments with no problems."
 
-
+# This is format for formatting the command to run training from scratch
+python run_experiment.py -t -m "vq" --avg_pooling -ua --train_vae_from_scratch
 # run_experiment.py -m $KL_MODEL -b $B_VAE --latent_channels $LATENT_CHANNELS --num_epochs $NUM_EPOCHS --data_id $dataset -rls $loss $TEST_FLAG -ua

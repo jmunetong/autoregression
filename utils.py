@@ -98,7 +98,8 @@ def build_experiment_metadata(args):
         "weight_decay": args.weight_decay,
         "learning_rate": args.lr,
         "latent_channels": args.latent_channels,
-
+        "seed": args.seed,
+    
     }
     if args.recons_loss == 'iwmse':
         metadata['alpha_mse'] = args.alpha_mse  
@@ -159,8 +160,13 @@ def diff_name_config(use_vae, args):
     return f"diff_{args.model_name}" if use_vae else f"diff_non_vae_{args.model_name}"
 
 
+def is_experiment_from_scratch(args):
+    if args.vae_from_scratch or args.diff_from_scratch:
+        return True
+    
+
 def configure_training(args, model_name_dir, accelerator):
-        # Step 1: Main process creates directory and metadata
+    # Step 1: Main process creates directory and metadata
     if accelerator.is_main_process:
         model_id, directory = create_directory(model_name_dir, args.data_id)
         experiment_dict = build_experiment_metadata(args)

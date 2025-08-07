@@ -77,7 +77,7 @@ class BaseTrainer():
     def load_model(self, directory):
         # 1. Load model weights (after .prepare, so we can unwrap)
         unwrapped_model = self.accelerator.unwrap_model(self.model)
-        unwrapped_model.load_pretrained(directory)
+        unwrapped_model.from_pretrained(directory)
 
         # 2. Load optimizer/scheduler/epoch/loss from checkpoint.pt
         checkpoint_path = os.path.join(directory, 'checkpoint.pt')

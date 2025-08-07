@@ -12,7 +12,7 @@ from train_utils.configs import *
 
 from utils import print_color, prepare_state_dict
 from plot import generate_vae_samples, generate_diff_samples
-from data_preprocessing import XrdDataset
+from data_preprocessing import create_train_val_datasets_zarr_split
 
 
 accelerator = Accelerator(log_with="wandb")
@@ -52,8 +52,9 @@ def get_args():
     parser.add_argument("--avg_pooling", action='store_true', help="Apply average pooling to the images")
     parser.add_argument("--topk", type=float, default=1.0, help="Top k percent of images to use for training")
     parser.add_argument("--data_path", type=str, default=DATA_PATH, help="Path to the data directory")
+    parser.add_argument("--train_ratio", type=float, default=0.8, help="Ratio of training data to validation data")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     
-
     # VQ and VAE model parameters
     parser.add_argument("--latent_channels", type=int, default=4, help="Number of latent channels")
     parser.add_argument("--use_annealing", "-ua", action="store_true", help="Use annealing for KL divergence loss")
@@ -61,7 +62,6 @@ def get_args():
     parser.add_argument("--train_vae_from_checkpoint", action="store_true", help="Train VAE model from a checkpoint")
     parser.add_argument("--train_vae_from_scratch", action="store_true", help="Train VAE model from scratch")
     parser.add_argument("--pretrained_vae_path", type=str, default=None, help="Path to pretrained VAE model")
-        # parser.add_argument("--train_vae", action="store_true", help="Train VAE model")
 
     # Diffusion model arguments
     parser.add_argument("--diff", action="store_true", help="Use diffusion model for training")
@@ -72,7 +72,7 @@ def get_args():
     parser.add_argument("--diff_epochs", type=int, default=10, help="Number of epochs for diffusion model training")
     parser.add_argument("--patch_size", type=int, default=16, help="Patch size for diffusion model")
     parser.add_argument("--vit_size", type=str, default="base", choices=["base", "large", "huge"], help="Size of the VIT model")
-        # parser.add_argument("--use_vae", action='store_true', help="Use VAE model for diffusion training")
+
     
     args = parser.parse_args()
     return args
@@ -82,12 +82,26 @@ def run(args):
     # Create a shared variable to store the values
     model_id, directory, experiment_dict = prepare_state_dict(args, accelerator)
     # Dataset and Dataloader
-    dataset = XrdDataset(data_dir=args.data_path,apply_pooling=args.avg_pooling, data_id=EXPERIMENTS[args.data_id], top_k=args.topk)
+    train_dataset, val_dataset = None, None
+    if accelerator.is_main_process:
+        train_dataset, val_dataset = create_train_val_datasets_zarr_split(
+            data_dir=args.data_path,
+            data_id=EXPERIMENTS[args.data_id],
+            train_ratio=args.train_ratio,
+            random_seed=args.seed,
+            apply_pooling=args.avg_pooling,
+            topk=args.topk,
+        )
+    accelerator.wait_for_everyone()  # Ensure all processes have created the datasets
+    train_dataset = accelerator.prepare(accelerator.broadcast_object(train_dataset, src=0))
+    val_dataset = accelerator.prepare(accelerator.broadcast_object(val_dataset, src=0))
 
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-    len_dataloader = len(dataloader)
-    dataloader = accelerator.prepare(dataloader)
-    
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    len_dataloader = len(train_dataloader)
+    train_dataloader = accelerator.prepare(train_dataloader)
+    val_dataloader = accelerator.prepare(val_dataloader)
+
     args_dict = vars(args)
     args_dict['model_id'] = model_id
     accelerator.init_trackers(
