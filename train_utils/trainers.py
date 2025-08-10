@@ -1,21 +1,20 @@
 import os
 from pyexpat import model
 import copy 
+import shutil
 import contextlib
 
 import yaml
 import torch
 from tqdm import tqdm
-from .annealing import Annealer
 
-
-from ema_pytorch import EMA
 from icecream import ic
 
 import torch
 from transformers import get_cosine_schedule_with_warmup
 from torch.optim import AdamW
 
+from train_utils.annealing import Annealer
 from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model, init_configure_diffusion
 from train_utils.ema import EMA
 
@@ -120,40 +119,147 @@ class BaseTrainer():
 #             'loss': loss,
 #         }
 #         torch.save(checkpoint, os.path.join(directory, 'checkpoint.pt'))
+    def save_raw_checkpoint(self, root_dir: str, *, epoch: int, step: int, train_loss: float) -> str:
+        """
+        Save the most recent RAW training snapshot:
+        - HF weights (consolidated via Accelerate)
+        - optimizer & scheduler state
+        - small metadata file
+        Returns the directory path written to.
+        """
+        out_dir = os.path.join(root_dir, "raw_last")
+        os.makedirs(out_dir, exist_ok=True)
 
-    def save_model(self, directory, epoch=None, loss=None, use_ema=False, save_ema_blob=True):
-    
+        # sync all ranks before saving
         self.accelerator.wait_for_everyone()
 
+        # consolidated state dict (FSDP/ZeRO/DDP-safe)
+        state_dict = self.accelerator.get_state_dict(self.model)
+
+        if self.accelerator.is_main_process:
+            base = self.accelerator.unwrap_model(self.model)
+            base.save_pretrained(
+                out_dir,
+                is_main_process=True,
+                save_function=self.accelerator.save,
+                state_dict=state_dict,
+            )
+            torch.save(
+                {
+                    "optimizer": self.optimizer.state_dict(),
+                    "scheduler": self.scheduler.state_dict(),
+                    "epoch": int(epoch),
+                    "step": int(step),
+                    "train_loss": float(train_loss),
+                },
+                os.path.join(out_dir, "checkpoint.pt"),
+            )
+            with open(os.path.join(root_dir, "LATEST_RAW.txt"), "w") as f:
+                f.write(out_dir)
+
+        # optional barrier so non-main ranks don't touch the folder early
+        self.accelerator.wait_for_everyone()
+        return out_dir
+    
+    # def save_model(self, directory, epoch=None, loss=None, use_ema=False):
+    
+    #     self.accelerator.wait_for_everyone()
+
      
-        ctx = self.ema.apply_to(self.model) if (use_ema and hasattr(self, "ema")) else contextlib.nullcontext()
+    #     ctx = self.ema.apply_to(self.model) if (use_ema and hasattr(self, "ema")) else contextlib.nullcontext()
+    #     with ctx:
+    #         # 3) Gather a FULL (global) state_dict regardless of sharding
+    #         state_dict = self.accelerator.get_state_dict(self.model)
+
+    #         # 4) Only main process writes files
+    #         if self.accelerator.is_main_process:
+    #             base = self.accelerator.unwrap_model(self.model)
+    #             base.save_pretrained(
+    #                 directory,
+    #                 is_main_process=True,
+    #                 save_function=self.accelerator.save,
+    #                 state_dict=state_dict,   # ensure we save the consolidated weights
+    #             )
+    #             # Save optimizer/scheduler metadata once
+    #             torch.save(
+    #                 {
+    #                     "optimizer": self.optimizer.state_dict(),
+    #                     "scheduler": self.scheduler.state_dict(),
+    #                     "epoch": epoch,
+    #                     "loss": loss,
+    #                 },
+    #                 os.path.join(directory, f"checkpoint_{'ema' if use_ema else ''}.pt"),
+    #             )
+
+    #     # 5) (Optional) another barrier so non-main ranks don’t race ahead and touch the folder
+    #     self.accelerator.wait_for_everyone()
+
+    def save_ema_checkpoint(
+        self,
+        root_dir: str,
+        *,
+        epoch: int,
+        step: int,
+        ema_val: float | None = None,
+        keep_history: bool = False,
+        tag: str | None = None,
+    ) -> str | None:
+        """
+        Save an EMA snapshot (weights only) for inference/deploy.
+        - If keep_history=False (default): writes/overwrites <root>/ema_best/
+        - If keep_history=True: writes <root>/ema_best_step{step}/ (keeps all)
+        - If tag is provided, saves to <root>/{tag}/ (overrides the above)
+        Returns the directory written, or None if EMA not available.
+        """
+        if not hasattr(self, "ema"):
+            if self.accelerator.is_main_process:
+                print("[save_ema_checkpoint] Skipped: self.ema not initialized.")
+            return None
+
+        # Choose output dir name
+        if tag is not None:
+            out_dir = os.path.join(root_dir, tag)
+        else:
+            out_dir = (
+                os.path.join(root_dir, f"ema_best_step{step}")
+                if keep_history else
+                os.path.join(root_dir, "ema_best")
+            )
+        tmp_dir = out_dir + ".tmp"
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        self.accelerator.wait_for_everyone()
+
+        # swap EMA weights into the wrapped model only while saving
+        ctx = self.ema.apply_to(self.model)
         with ctx:
-            # 3) Gather a FULL (global) state_dict regardless of sharding
             state_dict = self.accelerator.get_state_dict(self.model)
 
-            # 4) Only main process writes files
             if self.accelerator.is_main_process:
                 base = self.accelerator.unwrap_model(self.model)
                 base.save_pretrained(
-                    directory,
+                    tmp_dir,
                     is_main_process=True,
                     save_function=self.accelerator.save,
-                    state_dict=state_dict,   # ensure we save the consolidated weights
+                    state_dict=state_dict,
                 )
-                # Save optimizer/scheduler metadata once
-                torch.save(
-                    {
-                        "optimizer": self.optimizer.state_dict(),
-                        "scheduler": self.scheduler.state_dict(),
-                        "epoch": epoch,
-                        "loss": loss,
-                    },
-                    os.path.join(directory, "checkpoint.pt"),
-                )
+                # tiny metadata (no optimizer/scheduler for EMA)
+                meta = {"epoch": int(epoch), "step": int(step)}
+                if ema_val is not None:
+                    meta["ema_val_loss"] = float(ema_val)
+                torch.save(meta, os.path.join(tmp_dir, "meta.pt"))
 
-        # 5) (Optional) another barrier so non-main ranks don’t race ahead and touch the folder
+                # atomic-ish replace for the non-history case
+                if not keep_history and os.path.exists(out_dir):
+                    shutil.rmtree(out_dir)
+                os.rename(tmp_dir, out_dir)
+
+                with open(os.path.join(root_dir, "BEST_EMA.txt"), "w") as f:
+                    f.write(out_dir)
+
         self.accelerator.wait_for_everyone()
-        
+        return out_dir
+     
     def _save_experiment_config(self, experiment_dict, directory):
         with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
             yaml.dump(experiment_dict, f, default_flow_style=False)
