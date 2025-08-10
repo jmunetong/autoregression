@@ -1,6 +1,7 @@
 import os
 from pyexpat import model
 import copy 
+import contextlib
 
 import yaml
 import torch
@@ -105,20 +106,53 @@ class BaseTrainer():
         save_function=self.accelerator.save)
 
 
-    def save_model(self, directory, epoch=None, loss=None):
-        unwrapped_model = self.accelerator.unwrap_model(self.model)
-        unwrapped_model.save_pretrained(
-        directory,
-        is_main_process=self.accelerator.is_main_process,
-        save_function=self.accelerator.save,
-)   
-        checkpoint = {
-            'optimizer': self.accelerator.unwrap_model(self.optimizer).state_dict(),
-            'scheduler': self.accelerator.unwrap_model(self.scheduler).state_dict(),
-            'epoch': epoch,
-            'loss': loss,
-        }
-        torch.save(checkpoint, os.path.join(directory, 'checkpoint.pt'))
+#     def save_model(self, directory, epoch=None, loss=None):
+#         unwrapped_model = self.accelerator.unwrap_model(self.model)
+#         unwrapped_model.save_pretrained(
+#         directory,
+#         is_main_process=self.accelerator.is_main_process,
+#         save_function=self.accelerator.save,
+# )   
+#         checkpoint = {
+#             'optimizer': self.accelerator.unwrap_model(self.optimizer).state_dict(),
+#             'scheduler': self.accelerator.unwrap_model(self.scheduler).state_dict(),
+#             'epoch': epoch,
+#             'loss': loss,
+#         }
+#         torch.save(checkpoint, os.path.join(directory, 'checkpoint.pt'))
+
+    def save_model(self, directory, epoch=None, loss=None, use_ema=False, save_ema_blob=True):
+    
+        self.accelerator.wait_for_everyone()
+
+     
+        ctx = self.ema.apply_to(self.model) if (use_ema and hasattr(self, "ema")) else contextlib.nullcontext()
+        with ctx:
+            # 3) Gather a FULL (global) state_dict regardless of sharding
+            state_dict = self.accelerator.get_state_dict(self.model)
+
+            # 4) Only main process writes files
+            if self.accelerator.is_main_process:
+                base = self.accelerator.unwrap_model(self.model)
+                base.save_pretrained(
+                    directory,
+                    is_main_process=True,
+                    save_function=self.accelerator.save,
+                    state_dict=state_dict,   # ensure we save the consolidated weights
+                )
+                # Save optimizer/scheduler metadata once
+                torch.save(
+                    {
+                        "optimizer": self.optimizer.state_dict(),
+                        "scheduler": self.scheduler.state_dict(),
+                        "epoch": epoch,
+                        "loss": loss,
+                    },
+                    os.path.join(directory, "checkpoint.pt"),
+                )
+
+        # 5) (Optional) another barrier so non-main ranks don’t race ahead and touch the folder
+        self.accelerator.wait_for_everyone()
         
     def _save_experiment_config(self, experiment_dict, directory):
         with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
@@ -200,6 +234,7 @@ class TrainerVQ(BaseTrainer):
                 del recon_loss_i, recons
 
                 self.ema.update(self.model)
+
                 
                 # Step optimizer after accumulating gradients
                 self.optimizer.zero_grad()
