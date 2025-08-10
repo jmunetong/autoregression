@@ -16,30 +16,17 @@ from transformers import get_cosine_schedule_with_warmup
 from torch.optim import AdamW
 
 from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model, init_configure_diffusion
+from train_utils.ema import EMA
 
 TEST_LEGNTH = 1
 
-
-class EMA:
-    def __init__(self, model, decay):
-        self.ema_model = copy.deepcopy(model)
-        self.decay = decay
-        self.ema_model.requires_grad_(False)  # Don't backprop EMA model
-
-    @torch.no_grad()
-    def update(self, model):
-        for ema_param, model_param in zip(self.ema_model.parameters(), model.parameters()):
-            ema_param.data = self.decay * ema_param.data + (1. - self.decay) * model_param.data
-
-        for ema_buf, model_buf in zip(self.ema_model.buffers(), model.buffers()):
-            ema_buf.copy_(model_buf)
 
 class BaseTrainer():
     def __init__(self, model, args,  accelerator, len_dataloader=None):
         self.accelerator = accelerator
         self.current_epoch = 0
         self.model = model
-        
+        self.ema_model = EMA(model=model, decay=getattr("ema_decay", 0.9999), device=accelerator.device, dtype=torch.float32, accelerator=accelerator)
         self.optimizer = self._init_optimizer()
         assert len_dataloader is not None, "len_train_train_dataloader must be provided"
 
@@ -212,6 +199,7 @@ class TrainerVQ(BaseTrainer):
                     tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(train_dataloader)} - Loss: {loss_i.item():.4f}")
                 del recon_loss_i, recons
 
+                self.ema.update(self.model)
                 
                 # Step optimizer after accumulating gradients
                 self.optimizer.zero_grad()
