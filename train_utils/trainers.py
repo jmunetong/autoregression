@@ -272,6 +272,8 @@ class TrainerVQ(BaseTrainer):
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss})
             self.accelerator.wait_for_everyone()
             val_loss = self.validate_with_ema(val_datalaoder)
+            if self.accelerator.is_main_process:
+                print(f"Validation Loss: {val_loss:.4f}")
             # Saving Best model
             if val_loss < best_loss:
                 best_loss = val_loss
@@ -290,7 +292,7 @@ class TrainerVQ(BaseTrainer):
             
             with torch.no_grad():
                 for batch in val_loader:
-                    outputs = model(batch)
+                    outputs = self.model(batch, return_dict=True)
                     loss =self.compute_loss(outputs, batch, self.args.beta_recons)
                     
                     # Gather losses from all processes
@@ -352,7 +354,7 @@ class TrainerVAE(BaseTrainer):
         return loss_i, recon_loss_i, kl_loss_i
     
 
-    def run_train(self, train_dataloader, experiment_dict, directory):
+    def run_train(self, train_dataloader, val_dataloader, experiment_dict, directory):
         self.model.train()
         best_loss = float('inf')
         beta_recons = self.args.beta_recons
@@ -363,6 +365,7 @@ class TrainerVAE(BaseTrainer):
             epoch_loss = 0.0
             epoch_kl_loss = 0.0
             epoch_recon_loss = 0.0
+            model.train()
 
             for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):
                 # Important before starting one forward pass
@@ -383,6 +386,7 @@ class TrainerVAE(BaseTrainer):
                 # Step optimizer after accumulating gradients
                 self.optimizer.step()
                 self.scheduler.step()
+                self.ema.update(self.model)
                 del recon_i, mu_posterior, logvar_posterior
 
                 # Track metrics
@@ -402,9 +406,11 @@ class TrainerVAE(BaseTrainer):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
-
+            val_loss = self.validate_with_ema(val_dataloader)
+            if self.accelerator.is_main_process:
+                print(f"Validation Loss: {val_loss:.4f}")
             # Saving Best model
-            if epoch_loss < best_loss:
+            if val_loss < best_loss:
                 best_loss = epoch_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
@@ -454,17 +460,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
         ), args=args, accelerator=accelerator, len_dataloader=len_train_train_dataloader)
         
-        ema_kwargs = dict() # TODO: Fix this line of code
-
-        if self.is_main:
-            self.ema_model = EMA(
-                self.unwrap(self.model),
-                forward_method_names = ('sample',),
-                **ema_kwargs
-            )
-            # self.ema_model = self.accelerator.prepare(self.ema_model)
-            self.ema_model.to(self.accelerator.device)
-            
         self.accelerator.wait_for_everyone()
         
 
@@ -472,7 +467,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     def unwrap(model):
         return model.module if hasattr(model, "module") else model
     
-    def run_train(self, train_dataloader, experiment_dict, directory):
+    def run_train(self, train_dataloader, val_dataloader, experiment_dict, directory):
 
         best_loss = float('inf')
 
@@ -484,8 +479,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):          
                 self.optimizer.zero_grad()
                 assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
-                # batch = batch.contiguous()
-                # batch = batch * 2 -1  # Normalize to [-1, 1]
+            
                 loss_i = self.model(batch)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     self._save_experiment_config(experiment_dict, directory)
@@ -496,10 +490,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 self.scheduler.step()
                 self.optimizer.zero_grad()
                 
-                if self.is_main:
-                    self.unwrap(self.ema_model).update()
-                # self.accelerator.wait_for_everyone()
-                # self.unwrap(self.ema_model).update()
                 self.accelerator.wait_for_everyone()
                 
                 epoch_loss += loss_i.item()
@@ -578,7 +568,34 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         )
         self.accelerator.wait_for_everyone()
         
-
+    
+    def validate_with_ema(self, val_loader):
+        model.eval()
+        
+        # Apply EMA weights temporarily
+        with self.ema.apply_to(model):
+            total_loss = 0
+            num_batches = 0
+            
+            with torch.no_grad():
+                for batch in val_loader:
+                    outputs = model(batch)
+                    loss =self.compute_loss(outputs, batch, self.args.beta_recons)
+                    
+                    # Gather losses from all processes
+                    gathered_loss = self.accelerator.gather(loss)
+                    total_loss += gathered_loss.mean().item()
+                    num_batches += 1
+            
+            # Average across all processes
+            avg_loss = total_loss / num_batches
+            
+            # Only print on main process
+            if self.accelerator.is_main_process:
+                print(f"Validation Loss: {avg_loss:.4f}")
+        
+        return avg_loss
+    
 
 class TrainerDiffusion(TrainerDiffusionNonVAE):
     def __init__(self, args, vae_model,  accelerator, len_train_train_dataloader=None, input_shape=None):
