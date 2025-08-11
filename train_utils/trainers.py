@@ -76,26 +76,68 @@ class BaseTrainer():
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps)
         return scheduler
+
+    # def load_weights(self, directory):
+
+    #     ##TODO: REMOVE THIS FUNCTION. IT MIGHT NOT BE NECESSARY
+    #     """
+    #     Load the model weights from the specified directory.
+    #     """
+    #     if not os.path.exists(directory):
+    #         raise FileNotFoundError(f"Directory {directory} does not exist.")
         
-    def load_model(self, directory):
+    #     checkpoint_path = os.path.join(directory, "checkpoint.pt")
+    #     if not os.path.exists(checkpoint_path):
+    #         raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
+        
+    #     checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
+
+    #     self.model.load_state_dict(checkpoint['model'])
+    #     if 'ema_model' in checkpoint:
+    #         self.ema_model.load_state_dict(checkpoint['ema_model'])
+    #     if 'optimizer' in checkpoint:
+    #         self.optimizer.load_state_dict(checkpoint['optimizer'])
+         
+    def load_weights(self, directory):
+
         # 1. Load model weights (after .prepare, so we can unwrap)
+        directory_raw = os.path.join(directory, "raw_last")
         unwrapped_model = self.accelerator.unwrap_model(self.model)
-        unwrapped_model.from_pretrained(directory)
+        unwrapped_model.from_pretrained(directory_raw)
 
         # 2. Load optimizer/scheduler/epoch/loss from checkpoint.pt
+        #TODO: MODIFY THE DIRECTORY TO REFER TO THE RAW MODEL
         checkpoint_path = os.path.join(directory, 'checkpoint.pt')
+        directory_ema = os.path.join(directory, "ema_best")
+        self.load_ema_weights(directory_ema)
         if os.path.exists(checkpoint_path):
-            checkpoint = torch.load(checkpoint_path, map_location='cpu') #TODO: SHOULD THIS ACTUALLY BE ON GPU OR CPU
+            checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device) #TODO: SHOULD THIS ACTUALLY BE ON GPU OR CPU
 
             self.optimizer.load_state_dict(checkpoint['optimizer'])
             self.scheduler.load_state_dict(checkpoint['scheduler'])
 
             epoch = checkpoint.get('epoch', 0)
             loss = checkpoint.get('loss', None)
-
             return epoch, loss
         else:
             raise FileNotFoundError(f"checkpoint.pt not found in {directory}")
+        
+       
+    def load_ema_weights(self, directory):
+        """
+        Load the EMA weights from the specified directory.
+        """
+        #TODO: Modify to load the EMA weights directory'
+        directory = os.path.join(directory, "ema_best")
+        if not os.path.exists(directory):
+            raise FileNotFoundError(f"Directory {directory} does not exist.")
+        
+        ema_path = os.path.join(directory, "ema_model.pt")
+        if not os.path.exists(ema_path):
+            raise FileNotFoundError(f"EMA model file {ema_path} does not exist.")
+        
+        ema_state_dict = torch.load(ema_path, map_location=self.accelerator.device)
+        self.ema_model.load_state_dict(ema_state_dict)
         
     def save_vae(self, directory):
         unwrapped_model = self.accelerator.unwrap_model(self.model)
@@ -104,21 +146,6 @@ class BaseTrainer():
         is_main_process=self.accelerator.is_main_process,
         save_function=self.accelerator.save)
 
-
-#     def save_model(self, directory, epoch=None, loss=None):
-#         unwrapped_model = self.accelerator.unwrap_model(self.model)
-#         unwrapped_model.save_pretrained(
-#         directory,
-#         is_main_process=self.accelerator.is_main_process,
-#         save_function=self.accelerator.save,
-# )   
-#         checkpoint = {
-#             'optimizer': self.accelerator.unwrap_model(self.optimizer).state_dict(),
-#             'scheduler': self.accelerator.unwrap_model(self.scheduler).state_dict(),
-#             'epoch': epoch,
-#             'loss': loss,
-#         }
-#         torch.save(checkpoint, os.path.join(directory, 'checkpoint.pt'))
     def save_raw_checkpoint(self, root_dir: str, *, epoch: int, step: int, train_loss: float) -> str:
         """
         Save the most recent RAW training snapshot:
@@ -161,39 +188,6 @@ class BaseTrainer():
         self.accelerator.wait_for_everyone()
         return out_dir
     
-    # def save_model(self, directory, epoch=None, loss=None, use_ema=False):
-    
-    #     self.accelerator.wait_for_everyone()
-
-     
-    #     ctx = self.ema.apply_to(self.model) if (use_ema and hasattr(self, "ema")) else contextlib.nullcontext()
-    #     with ctx:
-    #         # 3) Gather a FULL (global) state_dict regardless of sharding
-    #         state_dict = self.accelerator.get_state_dict(self.model)
-
-    #         # 4) Only main process writes files
-    #         if self.accelerator.is_main_process:
-    #             base = self.accelerator.unwrap_model(self.model)
-    #             base.save_pretrained(
-    #                 directory,
-    #                 is_main_process=True,
-    #                 save_function=self.accelerator.save,
-    #                 state_dict=state_dict,   # ensure we save the consolidated weights
-    #             )
-    #             # Save optimizer/scheduler metadata once
-    #             torch.save(
-    #                 {
-    #                     "optimizer": self.optimizer.state_dict(),
-    #                     "scheduler": self.scheduler.state_dict(),
-    #                     "epoch": epoch,
-    #                     "loss": loss,
-    #                 },
-    #                 os.path.join(directory, f"checkpoint_{'ema' if use_ema else ''}.pt"),
-    #             )
-
-    #     # 5) (Optional) another barrier so non-main ranks don’t race ahead and touch the folder
-    #     self.accelerator.wait_for_everyone()
-
     def save_ema_checkpoint(
         self,
         root_dir: str,
@@ -264,25 +258,54 @@ class BaseTrainer():
         with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
             yaml.dump(experiment_dict, f, default_flow_style=False)
 
-    def load_weights(self, directory):
-        """
-        Load the model weights from the specified directory.
-        """
-        if not os.path.exists(directory):
-            raise FileNotFoundError(f"Directory {directory} does not exist.")
-        
-        checkpoint_path = os.path.join(directory, "checkpoint.pt")
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
-        
-        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
-
-        self.model.load_state_dict(checkpoint['model'])
-        if 'ema_model' in checkpoint:
-            self.ema_model.load_state_dict(checkpoint['ema_model'])
-        if 'optimizer' in checkpoint:
-            self.optimizer.load_state_dict(checkpoint['optimizer'])
+    # def save_model(self, directory, epoch=None, loss=None, use_ema=False):
     
+    #     self.accelerator.wait_for_everyone()
+
+     
+    #     ctx = self.ema.apply_to(self.model) if (use_ema and hasattr(self, "ema")) else contextlib.nullcontext()
+    #     with ctx:
+    #         # 3) Gather a FULL (global) state_dict regardless of sharding
+    #         state_dict = self.accelerator.get_state_dict(self.model)
+
+    #         # 4) Only main process writes files
+    #         if self.accelerator.is_main_process:
+    #             base = self.accelerator.unwrap_model(self.model)
+    #             base.save_pretrained(
+    #                 directory,
+    #                 is_main_process=True,
+    #                 save_function=self.accelerator.save,
+    #                 state_dict=state_dict,   # ensure we save the consolidated weights
+    #             )
+    #             # Save optimizer/scheduler metadata once
+    #             torch.save(
+    #                 {
+    #                     "optimizer": self.optimizer.state_dict(),
+    #                     "scheduler": self.scheduler.state_dict(),
+    #                     "epoch": epoch,
+    #                     "loss": loss,
+    #                 },
+    #                 os.path.join(directory, f"checkpoint_{'ema' if use_ema else ''}.pt"),
+    #             )
+
+    #     # 5) (Optional) another barrier so non-main ranks don’t race ahead and touch the folder
+    #     self.accelerator.wait_for_everyone()
+
+
+#     def save_model(self, directory, epoch=None, loss=None):
+#         unwrapped_model = self.accelerator.unwrap_model(self.model)
+#         unwrapped_model.save_pretrained(
+#         directory,
+#         is_main_process=self.accelerator.is_main_process,
+#         save_function=self.accelerator.save,
+# )   
+#         checkpoint = {
+#             'optimizer': self.accelerator.unwrap_model(self.optimizer).state_dict(),
+#             'scheduler': self.accelerator.unwrap_model(self.scheduler).state_dict(),
+#             'epoch': epoch,
+#             'loss': loss,
+#         }
+#         torch.save(checkpoint, os.path.join(directory, 'checkpoint.pt'))
 
 class TrainerVQ(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):

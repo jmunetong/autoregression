@@ -1,7 +1,7 @@
 import copy
 import contextlib
 import torch
-import accelerate
+import logging
 
 def _generic_unwrap(model):
     """
@@ -12,8 +12,10 @@ def _generic_unwrap(model):
     try:
         from accelerate.utils import extract_model_from_parallel
         return extract_model_from_parallel(model)
-    except Exception:
-        pass
+    except (ImportError, AttributeError) as e:
+        logging.debug(f"Accelerate extraction failed: {e}")
+    except Exception as e:
+        logging.warning(f"Unexpected error in accelerate extraction: {e}")
 
     m = model
     # Unroll nested .module wrappers if present.
@@ -34,16 +36,15 @@ class EMA:
         """
         self.decay = float(decay)
         self._unwrap = (
-            (unwrap_fn if unwrap_fn is not None else
-             (accelerator.unwrap_model if accelerator is not None else _generic_unwrap))
+            unwrap_fn if unwrap_fn is not None else
+            (accelerator.unwrap_model if accelerator is not None else _generic_unwrap)
         )
 
         base = self._unwrap(model)
         keep_dev = device if device is not None else 'cpu'
 
         # Track only trainable params
-        self._param_names = [n for n, p in base.named_parameters() if p.requires_grad]
-
+        self._param_names = []
         # Shadow params
         self.shadow = {}
         for n, p in base.named_parameters():
@@ -52,6 +53,7 @@ class EMA:
                 if dtype is not None:
                     t = t.to(dtype)
                 self.shadow[n] = t.clone()
+                self._param_names.append(n)
 
         # Copy buffers (e.g., BN running stats) verbatim; no decay.
         self.buffers = {}
@@ -60,6 +62,8 @@ class EMA:
             if dtype is not None and tb.is_floating_point():
                 tb = tb.to(dtype)
             self.buffers[n] = tb
+
+        print(f"EMA initialized with {len(self.shadow)} parameters and {len(self.buffers)} buffers")
 
     @torch.no_grad()
     def update(self, model):
@@ -94,26 +98,64 @@ class EMA:
         base = self._unwrap(model)
 
         # Stash originals
-        orig = {}
+        orig_params = {}
+        orig_buffers = {}
 
         with torch.no_grad():
+            # Store and replace parameters
             for n, p in base.named_parameters():
                 if n in self.shadow:
-                    orig[n] = p.data.clone()
-                    p.data.copy_(self.shadow[n].to(p.device, dtype=p.dtype))
+                    orig_params[n] = p.data  # Store reference, not clone
+                    p.data = self.shadow[n].to(p.device, dtype=p.dtype)
+            
+            # Store and replace buffers
             for n, b in base.named_buffers():
                 if n in self.buffers:
-                    if n not in orig:
-                        orig[n] = b.data.clone()
-                    b.data.copy_(self.buffers[n].to(b.device, dtype=b.dtype))
+                    orig_buffers[n] = b.data  # Store reference, not clone
+                    b.data = self.buffers[n].to(b.device, dtype=b.dtype)
 
         try:
             yield
         finally:
             with torch.no_grad():
+                # Restore parameters
                 for n, p in base.named_parameters():
-                    if n in orig:
-                        p.data.copy_(orig[n])
+                    if n in orig_params:
+                        p.data = orig_params[n]
+                
+                # Restore buffers
                 for n, b in base.named_buffers():
-                    if n in orig:
-                        b.data.copy_(orig[n])
+                    if n in orig_buffers:
+                        b.data = orig_buffers[n]
+
+    def state_dict(self):
+        """Return state dict for saving/loading EMA state."""
+        return {
+            'decay': self.decay,
+            'shadow': self.shadow,
+            'buffers': self.buffers,
+            'param_names': self._param_names
+        }
+
+    def load_state_dict(self, state_dict):
+        """Load EMA state from state dict."""
+        self.decay = state_dict['decay']
+        self.shadow = state_dict['shadow']
+        self.buffers = state_dict['buffers']
+        self._param_names = state_dict['param_names']
+
+    def copy_to(self, model):
+        """
+        Permanently copy EMA weights to model (useful for final model saving).
+        Unlike apply_to, this doesn't restore original weights.
+        """
+        base = self._unwrap(model)
+        
+        with torch.no_grad():
+            for n, p in base.named_parameters():
+                if n in self.shadow:
+                    p.data.copy_(self.shadow[n].to(p.device, dtype=p.dtype))
+            
+            for n, b in base.named_buffers():
+                if n in self.buffers:
+                    b.data.copy_(self.buffers[n].to(b.device, dtype=b.dtype))
