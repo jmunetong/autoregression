@@ -4,6 +4,7 @@ from pyexpat import model
 import copy 
 import shutil
 import contextlib
+import logging
 
 import yaml
 import torch
@@ -23,9 +24,19 @@ TEST_LEGNTH = 1
 
 def cleanup_old_checkpoints(path, keep_last=3):
     """Keep only the last N training checkpoints to save disk space"""
-    checkpoints = sorted(glob.glob(f"{path}/checkpoint_epoch_*.pth"))
+    checkpoints = sorted(glob.glob(f"{path}/raw_epoch_*"))
     for old_checkpoint in checkpoints[:-keep_last]:
         os.remove(old_checkpoint)
+
+def get_last_checkpoint(path):
+    """
+    Get the last checkpoint from the specified path.
+    Returns the path to the last checkpoint or None if no checkpoints are found.
+    """
+    checkpoints = sorted(glob.glob(f"{path}/raw_epoch_*"))
+    if not checkpoints:
+        return None
+    return checkpoints[-1]
 
 
 class BaseTrainer():
@@ -84,18 +95,15 @@ class BaseTrainer():
             num_training_steps=num_training_steps)
         return scheduler
          
-    def load_weights(self, directory):
+    def load_weights(self, directory,):
 
         # 1. Load model weights (after .prepare, so we can unwrap)
-        directory_raw = os.path.join(directory, "raw_last")
+        directory_raw = get_last_checkpoint(directory)
         unwrapped_model = self.accelerator.unwrap_model(self.model)
         unwrapped_model.from_pretrained(directory_raw)
-
-        # 2. Load optimizer/scheduler/epoch/loss from checkpoint.pt
-        #TODO: MODIFY THE DIRECTORY TO REFER TO THE RAW MODEL
         checkpoint_path = os.path.join(directory_raw, 'checkpoint.pt')
-        directory_ema = os.path.join(directory, "ema_best")
-        self.load_ema_weights(directory_ema)
+
+        self.load_ema_weights(directory)
         if os.path.exists(checkpoint_path):
             checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device) #TODO: SHOULD THIS ACTUALLY BE ON GPU OR CPU
 
@@ -113,7 +121,6 @@ class BaseTrainer():
         """
         Load the EMA weights from the specified directory.
         """
-        directory = os.path.join(directory, "ema_best")
         if not os.path.exists(directory):
             raise FileNotFoundError(f"Directory {directory} does not exist.")
         
@@ -132,7 +139,7 @@ class BaseTrainer():
         - small metadata file
         Returns the directory path written to.
         """
-        out_dir = os.path.join(root_dir, "raw_last")
+        out_dir = os.path.join(root_dir, f"raw_epoch_{epoch}")
         os.makedirs(out_dir, exist_ok=True)
 
         # sync all ranks before saving
@@ -162,6 +169,7 @@ class BaseTrainer():
             with open(os.path.join(root_dir, "LATEST_RAW.txt"), "w") as f:
                 f.write(out_dir)
 
+        cleanup_old_checkpoints(root_dir, keep_last=3)
         self.accelerator.wait_for_everyone()
         return out_dir
     
@@ -172,17 +180,41 @@ class BaseTrainer():
             if self.accelerator.is_main_process:
                 print("[save_ema_checkpoint] Skipped: EMA model is empty.")
             return None
-        
-        out_dir = os.path.join(root_dir, "ema_best")
-        os.makedirs(out_dir, exist_ok=True)
-        tmp_dir = out_dir + ".tmp"
-        return state_dict
-        pass
+        torch.save(state_dict, os.path.join(root_dir, "ema_model.pt"))
+        logging.info(f"EMA model saved to {root_dir}/ema_model.pt")
     
      
     def _save_experiment_config(self, experiment_dict, directory):
         with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
             yaml.dump(experiment_dict, f, default_flow_style=False)
+
+
+    def validate_with_ema(model, ema, val_loader, accelerator):
+        model.eval()
+        
+        # Apply EMA weights temporarily
+        with ema.apply_to(model):
+            total_loss = 0
+            num_batches = 0
+            
+            with torch.no_grad():
+                for batch in val_loader:
+                    outputs = model(batch)
+                    loss = compute_loss(outputs, batch)
+                    
+                    # Gather losses from all processes
+                    gathered_loss = accelerator.gather(loss)
+                    total_loss += gathered_loss.mean().item()
+                    num_batches += 1
+            
+            # Average across all processes
+            avg_loss = total_loss / num_batches
+            
+            # Only print on main process
+            if accelerator.is_main_process:
+                print(f"Validation Loss: {avg_loss:.4f}")
+        
+        return avg_loss
 
  
 
@@ -253,7 +285,7 @@ class TrainerVQ(BaseTrainer):
             
             print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss})
-
+    
             # Saving Best model
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
