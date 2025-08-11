@@ -44,7 +44,7 @@ class EMA:
         keep_dev = device if device is not None else 'cpu'
 
         # Track only trainable params
-        self._param_names = []
+        # self._param_names = []
         # Shadow params
         self.shadow = {}
         for n, p in base.named_parameters():
@@ -53,7 +53,7 @@ class EMA:
                 if dtype is not None:
                     t = t.to(dtype)
                 self.shadow[n] = t.clone()
-                self._param_names.append(n)
+                # self._param_names.append(n)
 
         # Copy buffers (e.g., BN running stats) verbatim; no decay.
         self.buffers = {}

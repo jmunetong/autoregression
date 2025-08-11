@@ -1,3 +1,4 @@
+import glob
 import os
 from pyexpat import model
 import copy 
@@ -19,6 +20,12 @@ from train_utils.configs import MODELS, RECONS_LOSS, init_configure_model, init_
 from train_utils.ema import EMA
 
 TEST_LEGNTH = 1
+
+def cleanup_old_checkpoints(path, keep_last=3):
+    """Keep only the last N training checkpoints to save disk space"""
+    checkpoints = sorted(glob.glob(f"{path}/checkpoint_epoch_*.pth"))
+    for old_checkpoint in checkpoints[:-keep_last]:
+        os.remove(old_checkpoint)
 
 
 class BaseTrainer():
@@ -76,27 +83,6 @@ class BaseTrainer():
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps)
         return scheduler
-
-    # def load_weights(self, directory):
-
-    #     ##TODO: REMOVE THIS FUNCTION. IT MIGHT NOT BE NECESSARY
-    #     """
-    #     Load the model weights from the specified directory.
-    #     """
-    #     if not os.path.exists(directory):
-    #         raise FileNotFoundError(f"Directory {directory} does not exist.")
-        
-    #     checkpoint_path = os.path.join(directory, "checkpoint.pt")
-    #     if not os.path.exists(checkpoint_path):
-    #         raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
-        
-    #     checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
-
-    #     self.model.load_state_dict(checkpoint['model'])
-    #     if 'ema_model' in checkpoint:
-    #         self.ema_model.load_state_dict(checkpoint['ema_model'])
-    #     if 'optimizer' in checkpoint:
-    #         self.optimizer.load_state_dict(checkpoint['optimizer'])
          
     def load_weights(self, directory):
 
@@ -107,7 +93,7 @@ class BaseTrainer():
 
         # 2. Load optimizer/scheduler/epoch/loss from checkpoint.pt
         #TODO: MODIFY THE DIRECTORY TO REFER TO THE RAW MODEL
-        checkpoint_path = os.path.join(directory, 'checkpoint.pt')
+        checkpoint_path = os.path.join(directory_raw, 'checkpoint.pt')
         directory_ema = os.path.join(directory, "ema_best")
         self.load_ema_weights(directory_ema)
         if os.path.exists(checkpoint_path):
@@ -127,7 +113,6 @@ class BaseTrainer():
         """
         Load the EMA weights from the specified directory.
         """
-        #TODO: Modify to load the EMA weights directory'
         directory = os.path.join(directory, "ema_best")
         if not os.path.exists(directory):
             raise FileNotFoundError(f"Directory {directory} does not exist.")
@@ -139,13 +124,6 @@ class BaseTrainer():
         ema_state_dict = torch.load(ema_path, map_location=self.accelerator.device)
         self.ema_model.load_state_dict(ema_state_dict)
         
-    def save_vae(self, directory):
-        unwrapped_model = self.accelerator.unwrap_model(self.model)
-        unwrapped_model.save_pretrained(
-        directory,
-        is_main_process=self.accelerator.is_main_process,
-        save_function=self.accelerator.save)
-
     def save_raw_checkpoint(self, root_dir: str, *, epoch: int, step: int, train_loss: float) -> str:
         """
         Save the most recent RAW training snapshot:
@@ -184,128 +162,29 @@ class BaseTrainer():
             with open(os.path.join(root_dir, "LATEST_RAW.txt"), "w") as f:
                 f.write(out_dir)
 
-        # optional barrier so non-main ranks don't touch the folder early
         self.accelerator.wait_for_everyone()
         return out_dir
     
-    def save_ema_checkpoint(
-        self,
-        root_dir: str,
-        *,
-        epoch: int,
-        step: int,
-        ema_val: float | None = None,
-        keep_history: bool = False,
-        tag: str | None = None,
-    ) -> str | None:
-        """
-        Save an EMA snapshot (weights only) for inference/deploy.
-        - If keep_history=False (default): writes/overwrites <root>/ema_best/
-        - If keep_history=True: writes <root>/ema_best_step{step}/ (keeps all)
-        - If tag is provided, saves to <root>/{tag}/ (overrides the above)
-        Returns the directory written, or None if EMA not available.
-        """
-        if not hasattr(self, "ema"):
+
+    def save_ema_check_point(self, root_dir):
+        state_dict = self.ema_model.state_dict()
+        if not state_dict:
             if self.accelerator.is_main_process:
-                print("[save_ema_checkpoint] Skipped: self.ema not initialized.")
+                print("[save_ema_checkpoint] Skipped: EMA model is empty.")
             return None
-
-        # Choose output dir name
-        if tag is not None:
-            out_dir = os.path.join(root_dir, tag)
-        else:
-            out_dir = (
-                os.path.join(root_dir, f"ema_best_step{step}")
-                if keep_history else
-                os.path.join(root_dir, "ema_best")
-            )
+        
+        out_dir = os.path.join(root_dir, "ema_best")
+        os.makedirs(out_dir, exist_ok=True)
         tmp_dir = out_dir + ".tmp"
-        os.makedirs(tmp_dir, exist_ok=True)
-
-        self.accelerator.wait_for_everyone()
-
-        # swap EMA weights into the wrapped model only while saving
-        ctx = self.ema.apply_to(self.model)
-        with ctx:
-            state_dict = self.accelerator.get_state_dict(self.model)
-
-            if self.accelerator.is_main_process:
-                base = self.accelerator.unwrap_model(self.model)
-                base.save_pretrained(
-                    tmp_dir,
-                    is_main_process=True,
-                    save_function=self.accelerator.save,
-                    state_dict=state_dict,
-                )
-                # tiny metadata (no optimizer/scheduler for EMA)
-                meta = {"epoch": int(epoch), "step": int(step)}
-                if ema_val is not None:
-                    meta["ema_val_loss"] = float(ema_val)
-                torch.save(meta, os.path.join(tmp_dir, "meta.pt"))
-
-                # atomic-ish replace for the non-history case
-                if not keep_history and os.path.exists(out_dir):
-                    shutil.rmtree(out_dir)
-                os.rename(tmp_dir, out_dir)
-
-                with open(os.path.join(root_dir, "BEST_EMA.txt"), "w") as f:
-                    f.write(out_dir)
-
-        self.accelerator.wait_for_everyone()
-        return out_dir
+        return state_dict
+        pass
+    
      
     def _save_experiment_config(self, experiment_dict, directory):
         with open(os.path.join(directory, "experiment_config.yml"), "w") as f:
             yaml.dump(experiment_dict, f, default_flow_style=False)
 
-    # def save_model(self, directory, epoch=None, loss=None, use_ema=False):
-    
-    #     self.accelerator.wait_for_everyone()
-
-     
-    #     ctx = self.ema.apply_to(self.model) if (use_ema and hasattr(self, "ema")) else contextlib.nullcontext()
-    #     with ctx:
-    #         # 3) Gather a FULL (global) state_dict regardless of sharding
-    #         state_dict = self.accelerator.get_state_dict(self.model)
-
-    #         # 4) Only main process writes files
-    #         if self.accelerator.is_main_process:
-    #             base = self.accelerator.unwrap_model(self.model)
-    #             base.save_pretrained(
-    #                 directory,
-    #                 is_main_process=True,
-    #                 save_function=self.accelerator.save,
-    #                 state_dict=state_dict,   # ensure we save the consolidated weights
-    #             )
-    #             # Save optimizer/scheduler metadata once
-    #             torch.save(
-    #                 {
-    #                     "optimizer": self.optimizer.state_dict(),
-    #                     "scheduler": self.scheduler.state_dict(),
-    #                     "epoch": epoch,
-    #                     "loss": loss,
-    #                 },
-    #                 os.path.join(directory, f"checkpoint_{'ema' if use_ema else ''}.pt"),
-    #             )
-
-    #     # 5) (Optional) another barrier so non-main ranks don’t race ahead and touch the folder
-    #     self.accelerator.wait_for_everyone()
-
-
-#     def save_model(self, directory, epoch=None, loss=None):
-#         unwrapped_model = self.accelerator.unwrap_model(self.model)
-#         unwrapped_model.save_pretrained(
-#         directory,
-#         is_main_process=self.accelerator.is_main_process,
-#         save_function=self.accelerator.save,
-# )   
-#         checkpoint = {
-#             'optimizer': self.accelerator.unwrap_model(self.optimizer).state_dict(),
-#             'scheduler': self.accelerator.unwrap_model(self.scheduler).state_dict(),
-#             'epoch': epoch,
-#             'loss': loss,
-#         }
-#         torch.save(checkpoint, os.path.join(directory, 'checkpoint.pt'))
+ 
 
 class TrainerVQ(BaseTrainer):
     def __init__(self, args, accelerator, len_dataloader=None):
