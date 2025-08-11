@@ -411,7 +411,7 @@ class TrainerVAE(BaseTrainer):
                 print(f"Validation Loss: {val_loss:.4f}")
             # Saving Best model
             if val_loss < best_loss:
-                best_loss = epoch_loss
+                best_loss = val_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
                 self.save_model(directory)
@@ -476,6 +476,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
             epoch_loss = 0.0
+            self.model.train()
             for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):          
                 self.optimizer.zero_grad()
                 assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
@@ -488,6 +489,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
 
                 self.optimizer.step()
                 self.scheduler.step()
+                self.ema.update(self.model)
                 self.optimizer.zero_grad()
                 
                 self.accelerator.wait_for_everyone()
@@ -498,9 +500,14 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
             self.current_epoch +=1
+            val_loss = self.validate_with_ema(val_dataloader)
+
+            if self.accelerator.is_main_process:
+                print(f"Validation Loss: {val_loss:.4f}")
+
             # Saving Best model
-            if epoch_loss < best_loss:
-                best_loss = epoch_loss
+            if val_loss < best_loss:
+                best_loss = val_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
                 self.save(directory)
@@ -508,6 +515,32 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             self.accelerator.wait_for_everyone()
     
         print('training complete')
+
+    def validate_with_ema(self, val_loader):
+        model.eval()
+        
+        # Apply EMA weights temporarily
+        with self.ema.apply_to(model):
+            total_loss = 0
+            num_batches = 0
+            
+            with torch.no_grad():
+                for batch in val_loader:
+                    loss = model(batch)
+                
+                    # Gather losses from all processes
+                    gathered_loss = self.accelerator.gather(loss)
+                    total_loss += gathered_loss.mean().item()
+                    num_batches += 1
+            
+            # Average across all processes
+            avg_loss = total_loss / num_batches
+            
+            # Only print on main process
+            if self.accelerator.is_main_process:
+                print(f"Validation Loss: {avg_loss:.4f}")
+        
+        return avg_loss
 
     def get_diff_model(self):
         """
