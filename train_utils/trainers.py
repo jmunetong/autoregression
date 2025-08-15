@@ -465,7 +465,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         
         self.accelerator.wait_for_everyone()
         
-
     @staticmethod
     def unwrap(model):
         return model.module if hasattr(model, "module") else model
@@ -586,26 +585,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     def is_main(self):
         return self.accelerator.is_main_process
 
-    def save_diff(self, path):
-        if not self.is_main:
-            return
-
-        save_package = dict(
-            model = self.accelerator.unwrap_model(self.model).state_dict(),
-            optimizer = self.accelerator.unwrap_model(self.optimizer).state_dict(),
-            scheduler = self.accelerator.unwrap_model(self.scheduler).state_dict(),
-            epoch = self.current_epoch,  # Save current epoch
-        )
-
-        torch.save(save_package, os.path.join(path, f'checkpoint.pt'))
-
-    def save(self, path):
-        if not self.is_main:
-            return
-    
-        self.save_diff(path)
-        self.save_model()
-
     
     def validate_with_ema(self, val_loader):
         model.eval()
@@ -657,12 +636,12 @@ class TrainerDiffusionNonVAE(BaseTrainer):
 
        
 
-
 class TrainerDiffusion(TrainerDiffusionNonVAE):
-    def __init__(self, args, vae_model,  accelerator, len_train_train_dataloader=None, input_shape=None):
-     
-        self.model_vae = self.accelerator.prepare(self.model_vae)  
+    def __init__(self, args, model_vae,  accelerator, len_train_train_dataloader=None, input_shape=None):
+
+        self.model_vae = self.accelerator.prepare(model_vae)  
         self.image_shape = input_shape
+        self.model_vae.eval()
         
         # self.image_shape = (1, *image_shape)
         if accelerator.is_main_process:
@@ -693,13 +672,18 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
             out = self.model_vae.encode(sample).latent_dist.sample()
         return out.shape[1:]
 
-    
     @staticmethod
     def unwrap(model):
         return model.module if hasattr(model, "module") else model
     
-    def run_train(self, train_dataloader, experiment_dict, directory):
+    def step(self, batch):
 
+        latents = self.model_vae.encode(batch).latent_dist.sample()
+        loss_i = self.model(latents)
+        return loss_i
+
+
+    def run_train(self, train_dataloader, experiment_dict, directory):
         best_loss = float('inf')
         # self.model_vae.eval()
         self.model_vae.train()
@@ -709,13 +693,10 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
             epoch_loss = 0.0
+            self.model.train()
             for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):          
-                # Decoding step
-                self.model.train()
-                latents = self.model_vae.encode(batch).latent_dist.sample()
-                # 
-                # detach().requires_grad_()
-                loss_i = self.model(latents)
+                
+                loss_i = self.step(batch)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     self._save_experiment_config(experiment_dict, directory)
                    
