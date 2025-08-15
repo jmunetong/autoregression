@@ -585,6 +585,8 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     def is_main(self):
         return self.accelerator.is_main_process
 
+    def step(self, batch):
+        return self.model(batch)
     
     def validate_with_ema(self, val_loader):
         model.eval()
@@ -596,7 +598,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             
             with torch.no_grad():
                 for batch in val_loader:
-                    outputs = model(batch)
+                    outputs = self.step(batch)
                     loss =self.compute_loss(outputs, batch, self.args.beta_recons)
                     
                     # Gather losses from all processes
@@ -712,7 +714,8 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
                 self.accelerator.wait_for_everyone()
                 
                 epoch_loss += loss_i.item()
-
+            
+            
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
