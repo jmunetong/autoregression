@@ -8,7 +8,7 @@ def _generic_unwrap(model):
     Works for torch DDP, FSDP, DeepSpeed, and many wrappers that expose `.module`.
     Falls back to the given model if no wrapping is present.
     """
-    # Try Accelerate utility if available (no hard dependency).
+
     try:
         from accelerate.utils import extract_model_from_parallel
         return extract_model_from_parallel(model)

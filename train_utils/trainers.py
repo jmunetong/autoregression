@@ -265,6 +265,7 @@ class TrainerVQ(BaseTrainer):
             epoch_loss /= len(train_dataloader)
             epoch_recon_loss /= len(train_dataloader)
             self.current_epoch += 1
+            self.accelerator.wait_for_everyone()
             if self.accelerator.is_main_process:
                 self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=epoch_loss)
             
@@ -402,9 +403,11 @@ class TrainerVAE(BaseTrainer):
             epoch_recon_loss /= len(train_dataloader)
             self.current_epoch += 1
             
-
+            self.accelerator.wait_for_everyone()
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
+                self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=epoch_loss)
+
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
             val_loss = self.validate_with_ema(val_dataloader)
             if self.accelerator.is_main_process:
@@ -414,7 +417,7 @@ class TrainerVAE(BaseTrainer):
                 best_loss = val_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
-                self.save_model(directory)
+                self.save_ema_check_point(directory)
             self.accelerator.wait_for_everyone()
 
 
@@ -470,8 +473,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     def run_train(self, train_dataloader, val_dataloader, experiment_dict, directory):
 
         best_loss = float('inf')
-
-        self.model.train()
         for epoch in range(self.args.diff_epochs if not self.args.test_pipeline else TEST_LEGNTH):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}/{self.args.diff_epochs}")     
@@ -493,14 +494,15 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 self.optimizer.zero_grad()
                 
                 self.accelerator.wait_for_everyone()
-                
-                epoch_loss += loss_i.item()
+
+                epoch_loss += self.accelerator.gather(loss_i.mean().item())
             epoch_loss /= len(train_dataloader)
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
             self.current_epoch +=1
             val_loss = self.validate_with_ema(val_dataloader)
+            self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=epoch_loss)
 
             if self.accelerator.is_main_process:
                 print(f"Validation Loss: {val_loss:.4f}")
@@ -510,7 +512,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 best_loss = val_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
-                self.save(directory)
+                self.save_ema_check_point(directory)
 
             self.accelerator.wait_for_everyone()
     
@@ -541,6 +543,38 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 print(f"Validation Loss: {avg_loss:.4f}")
         
         return avg_loss
+    
+    def save_raw_checkpoint(self, root_dir: str, *, epoch: int, step: int, train_loss: float) -> str:
+        """
+        Save the most recent RAW training snapshot:
+        - HF weights (consolidated via Accelerate)
+        - optimizer & scheduler state
+        - small metadata file
+        Returns the directory path written to.
+        """
+        out_dir = os.path.join(root_dir, f"raw_epoch_{epoch}")
+        os.makedirs(out_dir, exist_ok=True)
+
+        # sync all ranks before saving
+        self.accelerator.wait_for_everyone()
+        if self.accelerator.is_main_process:
+            base = self.accelerator.unwrap_model(self.model)
+            torch.save(
+                {"model": base.state_dict(),
+                    "optimizer": self.optimizer.state_dict(),
+                    "scheduler": self.scheduler.state_dict(),
+                    "epoch": int(epoch),
+                    "step": int(step),
+                    "train_loss": float(train_loss),
+                },
+                os.path.join(out_dir, "checkpoint.pt"),
+            )
+            with open(os.path.join(root_dir, "LATEST_RAW.txt"), "w") as f:
+                f.write(out_dir)
+
+        cleanup_old_checkpoints(root_dir, keep_last=3)
+        self.accelerator.wait_for_everyone()
+        return out_dir
 
     def get_diff_model(self):
         """
@@ -558,7 +592,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
 
         save_package = dict(
             model = self.accelerator.unwrap_model(self.model).state_dict(),
-            ema_model = self.ema_model.state_dict(),
             optimizer = self.accelerator.unwrap_model(self.optimizer).state_dict(),
             scheduler = self.accelerator.unwrap_model(self.scheduler).state_dict(),
             epoch = self.current_epoch,  # Save current epoch
@@ -573,34 +606,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         self.save_diff(path)
         self.save_model()
 
-    def load_weights(self, directory):
-        """
-        Load the model weights from the specified directory.
-        """
-        if not os.path.exists(directory):
-            raise FileNotFoundError(f"Directory {directory} does not exist.")
-        
-        checkpoint_path = os.path.join(directory, "checkpoint.pt")
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
-        
-        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
-        self.model = self.accelerator.unwrap_model(self.model)
-        self.optimizer = self.accelerator.unwrap_model(self.optimizer)
-        self.scheduler = self.accelerator.unwrap_model(self.scheduler)
-        self.model.load_state_dict(checkpoint['model'])
-        if 'ema_model' in checkpoint: # this is not necessary for now
-            self.ema_model.load_state_dict(checkpoint['ema_model'])
-        if 'optimizer' in checkpoint:
-            self.optimizer.load_state_dict(checkpoint['optimizer'])
-        if 'scheduler' in checkpoint:
-            self.scheduler.load_state_dict(checkpoint['scheduler'])
-
-        self.model, self.optimizer, self.scheduler = self.accelerator.prepare(
-            self.model, self.optimizer, self.scheduler
-        )
-        self.accelerator.wait_for_everyone()
-        
     
     def validate_with_ema(self, val_loader):
         model.eval()
@@ -628,7 +633,30 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 print(f"Validation Loss: {avg_loss:.4f}")
         
         return avg_loss
-    
+
+    def load_weights(self, directory,):
+
+        # 1. Load model weights (after .prepare, so we can unwrap)
+        directory_raw = get_last_checkpoint(directory)
+        self.model = self.accelerator.unwrap_model(self.model)
+        checkpoint_path = os.path.join(directory_raw, 'checkpoint.pt')
+
+        self.load_ema_weights(directory)
+        if os.path.exists(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device) #TODO: SHOULD THIS ACTUALLY BE ON GPU OR CPU
+            self.model.load_state_dict(checkpoint['model'])
+            self.model = self.accelerator.prepare(self.model)
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
+            epoch = checkpoint.get('epoch', 0)
+            loss = checkpoint.get('loss', None)
+            self.accelerator.wait_for_everyone()
+            return epoch, loss
+        else:
+            raise FileNotFoundError(f"checkpoint.pt not found in {directory}")
+
+       
+
 
 class TrainerDiffusion(TrainerDiffusionNonVAE):
     def __init__(self, args, vae_model,  accelerator, len_train_train_dataloader=None, input_shape=None):
@@ -656,14 +684,6 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
             # self.ema_model = self.accelerator.prepare(self.ema_model)
             self.ema_model.to(self.accelerator.device)
 
-        # self.ema_model = EMA(
-        #     self.unwrap(self.model),
-        #     forward_method_names = ('sample',),
-        #     **ema_kwargs
-        # )
-        # self.ema_model = self.accelerator.prepare(self.ema_model)
-
-            # self.ema_model.to(self.accelerator.device)
         self.accelerator.wait_for_everyone()
 
     def _get_prediction_shape_image(self):
