@@ -683,7 +683,7 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         return loss_i
 
 
-    def run_train(self, train_dataloader, experiment_dict, directory):
+    def run_train(self, train_dataloader, val_dataloader, experiment_dict, directory):
         best_loss = float('inf')
         # self.model_vae.eval()
         self.model_vae.train()
@@ -716,13 +716,13 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
-
+            val_loss = self.validate_with_ema(val_dataloader)
             # Saving Best model
-            if epoch_loss < best_loss:
+            if val_loss < val_loss:
                 best_loss = epoch_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
-                self.save(directory)
+                self.save_ema_check_point(directory)
 
             self.accelerator.wait_for_everyone()
     
@@ -736,23 +736,24 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         return self.unwrap(self.model_vae)
     
 
-    def save(self, path):
-        super().save(path)
-        unwrapped_model = self.accelerator.unwrap_model(self.vae_model)
-        unwrapped_model.save_pretrained(
-        path,
-        is_main_process=self.accelerator.is_main_process,
-        save_function=self.accelerator.save)
-        del unwrapped_model
+    # def save(self, path):
+    #     #TODO: Use the correct function to save the model that we are working currently
+    #     super().save(path)
+    #     unwrapped_model = self.accelerator.unwrap_model(self.vae_model)
+    #     unwrapped_model.save_pretrained(
+    #     path,
+    #     is_main_process=self.accelerator.is_main_process,
+    #     save_function=self.accelerator.save)
+    #     del unwrapped_model
 
 
-    def load_weights(self, directory):
-        super().load_weights(directory)
-        # 1. Load model weights (after .prepare, so we can unwrap)
-        self.model_vae = self.accelerator.unwrap_model(self.model_vae)
-        self.vae_model.load_pretrained(directory)
-        self.model_vae.eval()
-        self.vae_model = self.accelerator.prepare(self.vae_model)
+    # def load_weights(self, directory):
+    #     super().load_weights(directory)
+    #     # 1. Load model weights (after .prepare, so we can unwrap)
+    #     self.model_vae = self.accelerator.unwrap_model(self.model_vae)
+    #     self.vae_model.load_pretrained(directory)
+    #     self.model_vae.eval()
+    #     self.vae_model = self.accelerator.prepare(self.vae_model)
        
 
     
