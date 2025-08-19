@@ -84,26 +84,35 @@ def get_device():
     return device
 
 
-def build_experiment_metadata(args):
-    metadata = {
-        "model_name": args.model_name,
-        "data_id": args.data_id,
-        "batch_size": args.batch_size,
-        "num_epochs": args.num_epochs,
-        "beta_recons": args.beta_recons,
-        "recons_loss": args.recons_loss,
-        "input_shape": None,
-        "latent_shape": None,
-        "avg_pooling": args.avg_pooling,
-        "weight_decay": args.weight_decay,
-        "learning_rate": args.lr,
-        "latent_channels": args.latent_channels,
-        "seed": args.seed,
+# def build_experiment_metadata(args):
+    # metadata = {
+    #     "model_name": args.model_name,
+    #     "data_id": args.data_id,
+    #     "batch_size": args.batch_size,
+    #     "num_epochs": args.num_epochs,
+    #     "beta_recons": args.beta_recons,
+    #     "recons_loss": args.recons_loss,
+    #     "input_shape": None,
+    #     "latent_shape": None,
+    #     "avg_pooling": args.avg_pooling,
+    #     "weight_decay": args.weight_decay,
+    #     "learning_rate": args.lr,
+    #     "latent_channels": args.latent_channels,
+    #     "seed": args.seed,
     
-    }
-    if args.recons_loss == 'iwmse':
-        metadata['alpha_mse'] = args.alpha_mse  
+    # }
+    # if args.recons_loss == 'iwmse':
+    #     metadata['alpha_mse'] = args.alpha_mse  
+
+def build_experiment_metadata(args):
+    # Convert args to dictionary and create a copy
+    metadata = vars(args).copy()
+    # Add any computed or additional fields
+    metadata["input_shape"] = None
+    metadata["latent_shape"] = None
+    
     return metadata
+
 
 def create_experiment_id(model_name="vae", data_id=522):
     timestamp = time.strftime("%y%m%d-%H%M")
@@ -165,12 +174,35 @@ def is_experiment_from_scratch(args):
         return True
     
 
+def is_scratch_training(args):
+    return args.vae_from_scratch or args.diff_from_scratch
+
+def determine_experiment_directory(args):
+    if args.pretrained_diff_path is not None and args.train_diff_from_checkpoint:
+        directory = args.pretrained_diff_path
+    else:
+        directory = args.pretrained_vae_path
+
+    assert directory is not None
+
+    return directory
+
 def configure_training(args, model_name_dir, accelerator):
     # Step 1: Main process creates directory and metadata
     if accelerator.is_main_process:
-        model_id, directory = create_directory(model_name_dir, args.data_id)
-        experiment_dict = build_experiment_metadata(args)
-        
+        if is_experiment_from_scratch(args):
+            model_id, directory = create_directory(model_name_dir, args.data_id)
+            experiment_dict = build_experiment_metadata(args)
+        else:
+            metadata_path = determine_experiment_directory(args)
+            with open(os.path.join(metadata_path, "metadata.json"), 'r') as file:
+                d = json.load(file)
+            model_id = d["model_id"]
+            directory = d["directory"]
+            experiment_dict = d['experiment_dict']
+            del d, metadata_path
+
+    
         # Convert directory to string if it's a Path object
         directory_str = str(directory) if hasattr(directory, "__fspath__") else directory
         
@@ -180,6 +212,7 @@ def configure_training(args, model_name_dir, accelerator):
             f.write(directory_str)
         
         # Store the metadata in the actual directory
+
         with open(f"{directory}/metadata.json", "w") as f:
             json.dump({
                 "model_id": model_id,
