@@ -82,29 +82,22 @@ def get_args():
 def run(args):   
     # Create a shared variable to store the values
     model_id, directory, experiment_dict = prepare_state_dict(args, accelerator)
-    # Dataset and Dataloader
-    train_dataset, val_dataset = None, None
-    if accelerator.is_main_process:
-        train_dataset, val_dataset = create_train_val_datasets_zarr_split(
-            data_dir=args.data_path,
-            data_id=EXPERIMENTS[args.data_id],
-            train_ratio=args.train_ratio,
-            random_seed=args.seed,
-            apply_pooling=args.avg_pooling,
-            topk=args.topk,
-        )
 
-    train_dataset = accelerator.broadcast_object_list([train_dataset])[0]
-    val_dataset = accelerator.broadcast_object_list([val_dataset])[0]
+    # Create datasets on all processes (using same seed ensures consistency)
+    train_dataset, val_dataset = create_train_val_datasets_zarr_split(
+        data_dir=args.data_path,
+        data_id=EXPERIMENTS[args.data_id],
+        train_ratio=args.train_ratio,
+        random_seed=args.seed,
+        apply_pooling=args.avg_pooling,
+        topk=args.topk,
+    )
 
     # Create dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-
-    # Get length before preparing (important for distributed training)
     len_dataloader = len(train_dataloader)
 
-    # Prepare the dataloaders
     train_dataloader, val_dataloader = accelerator.prepare(train_dataloader, val_dataloader)
 
     args_dict = vars(args)

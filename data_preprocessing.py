@@ -30,7 +30,7 @@ def pad_to_multiple(x, multiple=16):
 
 class XrdDataset(Dataset):
     def __init__(self, data_dir, data_id, feature_extractor=None,       rescale=False, 
-                 apply_pooling=False, top_k=1.0, filter_size=3, zarr_indices=None):
+                 apply_pooling=False, topk=1.0, filter_size=3, zarr_indices=None):
         self.data_id = data_id
         self.zarr_pointers = load_zarr_files(get_directories(data_dir), data_id=data_id)
         
@@ -38,8 +38,8 @@ class XrdDataset(Dataset):
         if zarr_indices is not None:
             self.zarr_pointers = [self.zarr_pointers[i] for i in zarr_indices]
         
-        self.top_k = int(len(self.zarr_pointers) * min(top_k,1.0))
-        self.zarr_pointers = self.zarr_pointers[:self.top_k]
+        self.topk = int(len(self.zarr_pointers) * min(topk,1.0))
+        self.zarr_pointers = self.zarr_pointers[:self.topk]
         self._preprocess_indeces()
         self.feature_extractor = feature_extractor
         self.rescale = rescale

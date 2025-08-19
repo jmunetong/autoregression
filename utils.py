@@ -170,8 +170,7 @@ def diff_name_config(use_vae, args):
 
 
 def is_experiment_from_scratch(args):
-    if args.vae_from_scratch or args.diff_from_scratch:
-        return True
+    return args.train_vae_from_scratch or args.train_diff_from_scratch
     
 
 def is_scratch_training(args):
