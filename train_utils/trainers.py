@@ -204,7 +204,7 @@ class TrainerVQ(BaseTrainer):
         recons = out.sample
         recon_loss_i = self.recons_loss(recons, batch)
         loss_i = beta_recons * recon_loss_i + loss_i
-        return loss_i
+        return loss_i, recon_loss_i
     
     def step(self, batch, i, epoch, experiment_dict, directory):
         ## Encoding Step
@@ -244,19 +244,15 @@ class TrainerVQ(BaseTrainer):
                 out = self.step(batch, i, epoch, experiment_dict, directory)
                 self.accelerator.wait_for_everyone()
                 # Loss Function Computation
-                loss_i = self.compute_loss(out, batch, beta_recons)
+                loss_i, recon_loss_i = self.compute_loss(out, batch, beta_recons)
                 self.accelerator.backward(loss_i)
                 self.optimizer.step()
                 self.scheduler.step()
                 self.accelerator.wait_for_everyone()
                 # Track metrics
-                epoch_loss += self.accelerator.gather(loss_i).mean().item()
-                epoch_recon_loss += self.accelerator.gather(out.recon_loss).mean().item()
-                if self.accelerator.is_main_process:
-                    tqdm.write(f"Epoch {epoch+1} - Batch {i+1}/{len(train_dataloader)} - Loss: {loss_i.item():.4f}")
-                del recon_loss_i, recons
-
-                self.ema.update(self.model)
+                epoch_loss += loss_i.item()
+                epoch_recon_loss += recon_loss_i.item()
+                self.ema_model.update(self.model)
 
                 
                 # Step optimizer after accumulating gradients
@@ -264,13 +260,15 @@ class TrainerVQ(BaseTrainer):
             # Update epoch metrics with batch averages
             epoch_loss /= len(train_dataloader)
             epoch_recon_loss /= len(train_dataloader)
+            if self.accelerator.is_main_process:
+                all_epoch_losses = self.accelerator.gather(torch.tensor(epoch_loss))
+                global_avg_loss = all_epoch_losses.mean().item()
+                print(f"Global average epoch {epoch + 1} loss: {global_avg_loss}")
             self.current_epoch += 1
             self.accelerator.wait_for_everyone()
             if self.accelerator.is_main_process:
                 self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=epoch_loss)
-            
-            print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss})
+    
             self.accelerator.wait_for_everyone()
             val_loss = self.validate_with_ema(val_datalaoder)
             if self.accelerator.is_main_process:
@@ -284,31 +282,38 @@ class TrainerVQ(BaseTrainer):
             self.accelerator.wait_for_everyone()
     
     def validate_with_ema(self, val_loader):
-        model.eval()
+        self.model.eval()
         
         # Apply EMA weights temporarily
-        with self.ema.apply_to(model):
-            total_loss = 0
+        with self.ema_model.apply_to(self.model):
+            total_loss = 0.0
             num_batches = 0
             
             with torch.no_grad():
                 for batch in val_loader:
                     outputs = self.model(batch, return_dict=True)
-                    loss =self.compute_loss(outputs, batch, self.args.beta_recons)
+                    loss, _ = self.compute_loss(outputs, batch, self.args.beta_recons)
                     
-                    # Gather losses from all processes
-                    gathered_loss = self.accelerator.gather(loss)
-                    total_loss += gathered_loss.mean().item()
+                    # Just accumulate local losses (no gather needed here)
+                    total_loss += loss.item()
                     num_batches += 1
             
-            # Average across all processes
-            avg_loss = total_loss / num_batches
+            # Calculate local average
+            if num_batches > 0:
+                avg_loss = total_loss / num_batches
+            else:
+                avg_loss = 0.0
             
-            # Only print on main process
-            if self.accelerator.is_main_process:
-                print(f"Validation Loss: {avg_loss:.4f}")
+            # Gather the averaged losses from all processes and compute global average
+            avg_loss_tensor = torch.tensor(avg_loss, device=self.accelerator.device)
+            gathered_losses = self.accelerator.gather(avg_loss_tensor)
+            global_avg_loss = gathered_losses.mean().item()
+            
+            # Only print on main process (moved this outside since you're calling it in run_train)
+            # if self.accelerator.is_main_process:
+            #     print(f"Validation Loss: {global_avg_loss:.4f}")
         
-        return avg_loss
+        return global_avg_loss
     
     def _init_model(self):
         assert self.args.model_name.startswith("vq"), "Model name must start with 'vq' for VQTrainer"
@@ -366,7 +371,7 @@ class TrainerVAE(BaseTrainer):
             epoch_loss = 0.0
             epoch_kl_loss = 0.0
             epoch_recon_loss = 0.0
-            model.train()
+            self.model.train()
 
             for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):
                 # Important before starting one forward pass
@@ -387,13 +392,13 @@ class TrainerVAE(BaseTrainer):
                 # Step optimizer after accumulating gradients
                 self.optimizer.step()
                 self.scheduler.step()
-                self.ema.update(self.model)
+                self.ema_model.update(self.model)
                 del recon_i, mu_posterior, logvar_posterior
 
                 # Track metrics
-                epoch_loss += self.accelerator.gather(loss_i).mean().item()
-                epoch_kl_loss += self.accelerator.gather(kl_loss_i).mean().item()
-                epoch_recon_loss += self.accelerator.gather(recon_loss_i).mean().item()
+                epoch_loss += loss_i.item()
+                epoch_kl_loss += kl_loss_i.item()
+                epoch_recon_loss += recon_loss_i.item()
                 tqdm.write(f"Epoch {epoch + 1} - Batch {i+1}/{len(train_dataloader)} - Loss: {loss_i.item():.4f}")
                 
                 
@@ -422,17 +427,18 @@ class TrainerVAE(BaseTrainer):
 
 
     def validate_with_ema(self, val_loader):
-        model.eval()
+        self.model.eval()
         
         # Apply EMA weights temporarily
-        with self.ema.apply_to(model):
+        with self.ema_model.apply_to(self.model):
             total_loss = 0
             num_batches = 0
             
             with torch.no_grad():
                 for batch in val_loader:
-                    outputs = model(batch)
-                    loss =self.compute_loss(outputs, batch, self.args.beta_recons)
+                    recon_i, logvar_posterior, mu_posterior = self.step(batch, i=2, epoch=2, experiment_dict=None, directory=None)
+
+                    loss =self.compute_loss(recon_i=recon_i, logvar_posterior=logvar_posterior, mu_posterior=mu_posterior, batch=batch, batch_size=batch.size(0), beta_recons=self.args.beta_recons)[0]
                     
                     # Gather losses from all processes
                     gathered_loss = self.accelerator.gather(loss)
@@ -489,7 +495,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
 
                 self.optimizer.step()
                 self.scheduler.step()
-                self.ema.update(self.model)
+                self.ema_model.update(self.model)
                 self.optimizer.zero_grad()
                 
                 self.accelerator.wait_for_everyone()
@@ -521,7 +527,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         model.eval()
         
         # Apply EMA weights temporarily
-        with self.ema.apply_to(model):
+        with self.ema_model.apply_to(model):
             total_loss = 0
             num_batches = 0
             
@@ -592,7 +598,7 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         model.eval()
         
         # Apply EMA weights temporarily
-        with self.ema.apply_to(model):
+        with self.ema_model.apply_to(model):
             total_loss = 0
             num_batches = 0
             
