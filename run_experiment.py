@@ -41,6 +41,7 @@ def get_args():
     parser.add_argument("--beta_recons", type=float, default=0.5, help="weight MSE Loss")
     parser.add_argument("--recons_loss", "-rls", type=str, default="mse", choices=["mse", "l1", "iwmse"], help="Reconstruction loss type")
     parser.add_argument("--alpha_mse", type=float, default=2.0, help="Alpha value for Intensity Weighted MSE Loss")
+    parser.add_argument("--ema_decay", type=float, default=0.9999, help="EMA decay rate")
 
     # Inference parameters #TODO: Complete this part for running inference values
     parser.add_argument("--inference", action="store_true", help="Run inference on the trained model")
@@ -92,15 +93,19 @@ def run(args):
             apply_pooling=args.avg_pooling,
             topk=args.topk,
         )
-    accelerator.wait_for_everyone()  # Ensure all processes have created the datasets
-    train_dataset = accelerator.prepare(accelerator.broadcast_object(train_dataset, src=0))
-    val_dataset = accelerator.prepare(accelerator.broadcast_object(val_dataset, src=0))
 
+    train_dataset = accelerator.broadcast_object_list([train_dataset])[0]
+    val_dataset = accelerator.broadcast_object_list([val_dataset])[0]
+
+    # Create dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+
+    # Get length before preparing (important for distributed training)
     len_dataloader = len(train_dataloader)
-    train_dataloader = accelerator.prepare(train_dataloader)
-    val_dataloader = accelerator.prepare(val_dataloader)
+
+    # Prepare the dataloaders
+    train_dataloader, val_dataloader = accelerator.prepare(train_dataloader, val_dataloader)
 
     args_dict = vars(args)
     args_dict['model_id'] = model_id
@@ -130,8 +135,8 @@ def run(args):
 
         if (args.train_vae_from_scratch or args.train_vae_from_checkpoint) and not args.inference:
             directory = loading_directory if args.pretrained_vae_path else directory
-            print_main(accelerator, f"Training VAE model with {len(dataloader)} batches", "blue")
-            trainer_vae.run_train(dataloader, experiment_dict, directory)
+            print_main(accelerator, f"Training VAE model with {len_dataloader} batches", "blue")
+            trainer_vae.run_train(train_dataloader, val_dataloader, experiment_dict, directory)
 
         else:
             print_main(accelerator, "Skipping VAE training. Jumping to inference generation for VAE", "yellow")
@@ -142,16 +147,15 @@ def run(args):
 
     if args.latent_diff:
         from train_utils.trainers import TrainerDiffusion as train_diff
-        vae_model = trainer_vae.get_model(with_accelerator=False)
-        diffusion_trainer = train_diff(args, vae_model=vae_model, accelerator=accelerator,           input_shape=dataset.get_image_shape(), len_train_data_loader=len(dataloader))
+        vae_model = trainer_vae.get_model()
+        diffusion_trainer = train_diff(args, vae_model=vae_model, accelerator=accelerator,           input_shape=train_dataset.get_image_shape(), len_train_data_loader=len_dataloader)
         model_config = diffusion_trainer.get_model_config()
         
 
     if args.diff:
         from train_utils.trainers import TrainerDiffusionNonVAE as train_diff
-        print_main(accelerator, f"Running diffusion model without VAE with {len(dataloader)} batches", "blue")
-        diffusion_trainer = train_diff(args, accelerator=accelerator,           input_shape=dataset.get_image_shape(), len_train_data_loader=len(dataloader))
-
+        print_main(accelerator, f"Running diffusion model without VAE with {len_dataloader} batches", "blue")
+        diffusion_trainer = train_diff(args, accelerator=accelerator,           input_shape=train_dataset.get_image_shape(), len_train_data_loader=len_dataloader)
         print_main(accelerator, f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")
 
     if args.train_diff_from_checkpoint or args.inference:
@@ -162,7 +166,8 @@ def run(args):
     if (args.train_diff_from_checkpoint or args.train_diff_from_scratch) and not args.inference:
         #todo: directory needs to change
         directory = loading_directory if args.pretrained_diff_path else directory
-        diffusion_trainer.run_train(dataloader, experiment_dict, directory)
+        diffusion_trainer.run_train(train_dataloader,val_dataloader, experiment_dict, directory)
+
         if accelerator.is_main_process:
             model_config = diffusion_trainer.get_model_config()
 
@@ -191,20 +196,16 @@ def run(args):
 
     # Inference generation
     if not args.diff or not args.latent_diff:
-        generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory, idx_list=idx_list)
+        generate_vae_samples(trainer_vae.get_model().eval(), val_dataloader, directory, idx_list=idx_list)
     else:
-        #TODO: MAKE THE INFERENCE GENERATION BE ACROSS EACH GPU.
-        
         print_main(accelerator, f"Generating {args.num_samples} samples with diffusion model", "blue")
-        min_pixel, max_pixel = dataset.get_min_max()
-        #TODO: MODIFY THIS FUNCTION FOR DIFFUSION WITHOUT VAE BACKEND.
-
+        min_pixel, max_pixel = train_dataset.get_min_max()
+    
         generate_diff_samples(diffusion_trainer.get_model().eval(),  directory, idx_list=idx_list, encoding_shape=diffusion_trainer.encoding_shape, image_shape=diffusion_trainer.image_shape, min_pixel=min_pixel, max_pixel=max_pixel, use_vae=args.latent_diff)
  
         if args.latent_diff:
             print_main(accelerator, "Generating samples with VAE", "blue")
-            generate_vae_samples(trainer_vae.get_model().eval(), dataloader, directory, idx_list=idx_list)
-        # generate_vae_samples(trainer_vae.get_model(), dataloader, directory)
+            generate_vae_samples(trainer_vae.get_model().eval(), val_dataloader, directory, idx_list=idx_list)
 
 
 

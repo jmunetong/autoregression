@@ -44,7 +44,7 @@ class BaseTrainer():
         self.accelerator = accelerator
         self.current_epoch = 0
         self.model = model
-        self.ema_model = EMA(model=model, decay=getattr("ema_decay", 0.9999), device=accelerator.device, dtype=torch.float32, accelerator=accelerator)
+        self.ema_model = EMA(model=model, decay=getattr(args, "ema_decay", 0.9999), device=accelerator.device, dtype=torch.float32, accelerator=accelerator)
         self.optimizer = self._init_optimizer()
         assert len_dataloader is not None, "len_train_train_dataloader must be provided"
 
@@ -654,16 +654,16 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         del encoding_shape
         super().__init__(args, accelerator, len_train_train_dataloader=len_train_train_dataloader, input_shape=self.encoding_shape[-1])
               
-        ema_kwargs = dict() # TODO: Fix this line of code
+        # ema_kwargs = dict() # TODO: Fix this line of code
 
-        if self.is_main:
-            self.ema_model = EMA(
-                self.unwrap(self.model),
-                forward_method_names = ('sample',),
-                **ema_kwargs
-            )
-            # self.ema_model = self.accelerator.prepare(self.ema_model)
-            self.ema_model.to(self.accelerator.device)
+        # if self.is_main:
+        #     self.ema_model = EMA(
+        #         self.unwrap(self.model),
+        #         forward_method_names = ('sample',),
+        #         **ema_kwargs
+        #     )
+        #     # self.ema_model = self.accelerator.prepare(self.ema_model)
+        #     self.ema_model.to(self.accelerator.device)
 
         self.accelerator.wait_for_everyone()
 
