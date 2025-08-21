@@ -47,7 +47,6 @@ class BaseTrainer():
         self.ema_model = EMA(model=model, decay=getattr(args, "ema_decay", 0.9999), device=accelerator.device, dtype=torch.float32, accelerator=accelerator)
         self.optimizer = self._init_optimizer()
         assert len_dataloader is not None, "len_train_train_dataloader must be provided"
-        self.args = args
 
         # Scheduler parameters
         num_training_steps = len_dataloader * args.num_epochs
@@ -535,12 +534,15 @@ class TrainerVAE(BaseTrainer):
 
 class TrainerDiffusionNonVAE(BaseTrainer):
     def __init__(self, args, accelerator, len_train_dataloader=None, input_shape=None):
+        self.args = args
         assert input_shape is not None, "input_shape must be provided"
-        super().__init__(model=init_configure_diffusion(
+        self.image_shape = input_shape
+        diff_model, self.model_config = init_configure_diffusion(
             vit_size=args.vit_size,
             patch_size=args.patch_size,
             input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
-        ), args=args, accelerator=accelerator, len_dataloader=len_train_dataloader)
+        )
+        super().__init__(model=diff_model, args=args, accelerator=accelerator, len_dataloader=len_train_dataloader)
         
         self.accelerator.wait_for_everyone()
         
@@ -559,7 +561,8 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):          
                 self.optimizer.zero_grad()
                 assert batch.shape[-1] == self.image_shape[-1], f"Batch shape {batch.shape} does not match expected shape {self.image_shape}"
-            
+                if self.args.test_pipeline and i > TEST_LEGNTH:
+                    break
                 loss_i = self.model(batch)
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     self._save_experiment_config(experiment_dict, directory)
@@ -596,32 +599,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     
         print('training complete')
 
-    def validate_with_ema(self, val_loader):
-        model.eval()
-        
-        # Apply EMA weights temporarily
-        with self.ema_model.apply_to(model):
-            total_loss = 0
-            num_batches = 0
-            
-            with torch.no_grad():
-                for batch in tqdm(val_loader, desc="Validation", total=len(val_loader)):
-                    loss = model(batch)
-                    total_loss += loss.item()
-                    num_batches += 1
-        
-            # Calculate local average
-            if num_batches > 0:
-                avg_loss = total_loss / num_batches
-            else:
-                avg_loss = 0.0
-            
-            # Gather the averaged losses from all processes and compute global average
-            avg_loss_tensor = torch.tensor(avg_loss, device=self.accelerator.device)
-            gathered_losses = self.accelerator.gather(avg_loss_tensor)
-            global_avg_loss = gathered_losses.mean().item()
-                    
-        return global_avg_loss
     
     def save_raw_checkpoint(self, root_dir: str, *, epoch: int, step: int, train_loss: float) -> str:
         """
@@ -668,26 +645,37 @@ class TrainerDiffusionNonVAE(BaseTrainer):
     def step(self, batch):
         return self.model(batch)
     
+
     def validate_with_ema(self, val_loader):
-        model.eval()
+        self.model.eval()
         
         # Apply EMA weights temporarily
-        with self.ema_model.apply_to(model):
+        with self.ema_model.apply_to(self.model):
             total_loss = 0
-            num_batches = 0
+            total_samples = 0
             
             with torch.no_grad():
-                for batch in val_loader:
-                    outputs = self.step(batch)
-                    loss =self.compute_loss(outputs, batch, self.args.beta_recons)
+                for i, batch in tqdm(enumerate(val_loader), desc="Validation", total=len(val_loader), disable=not self.accelerator.is_main_process):
+                    if self.args.test_pipeline and i > TEST_LEGNTH:
+                        break
                     
-                    # Gather losses from all processes
-                    gathered_loss = self.accelerator.gather(loss)
-                    total_loss += gathered_loss.mean().item()
-                    num_batches += 1
+                    loss = self.step(batch)
+                    batch_size = self.get_batch_size(batch)  # You'll need to implement this
+                    
+                    # Accumulate loss weighted by batch size
+                    total_loss += loss.item() * batch_size
+                    total_samples += batch_size
             
-            # Average across all processes
-            avg_loss = total_loss / num_batches
+            # Create tensors for reduction across processes
+            total_loss_tensor = torch.tensor(total_loss, device=self.accelerator.device)
+            total_samples_tensor = torch.tensor(total_samples, device=self.accelerator.device)
+            
+            # Reduce across all processes
+            total_loss_all = self.accelerator.reduce(total_loss_tensor, reduction="sum")
+            total_samples_all = self.accelerator.reduce(total_samples_tensor, reduction="sum")
+            
+            # Compute global average
+            avg_loss = total_loss_all.item() / total_samples_all.item()
             
             # Only print on main process
             if self.accelerator.is_main_process:
@@ -695,6 +683,21 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         
         return avg_loss
 
+
+    def get_batch_size(self, batch):
+        """Helper function to get batch size from your batch format"""
+        # Adjust this based on your batch structure
+        if isinstance(batch, dict):
+            # If batch is a dictionary, get size from first tensor
+            first_key = next(iter(batch))
+            return batch[first_key].shape[0]
+        elif isinstance(batch, (list, tuple)):
+            # If batch is a list/tuple, get size from first element
+            return batch[0].shape[0]
+        else:
+            # If batch is a tensor directly
+            return batch.shape[0]
+    
     def load_weights(self, directory,):
 
         # 1. Load model weights (after .prepare, so we can unwrap)
@@ -722,7 +725,7 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         self.model_vae = self.accelerator.prepare(model_vae)  
         self.image_shape = input_shape
         self.model_vae.eval()
-        
+    
         if accelerator.is_main_process:
             encoding_shape = self._get_prediction_shape_image()
         else:
@@ -731,17 +734,6 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         del encoding_shape
         super().__init__(args, accelerator, len_train_train_dataloader=len_train_dataloader, input_shape=self.encoding_shape[-1])
               
-        # ema_kwargs = dict() # TODO: Fix this line of code
-
-        # if self.is_main:
-        #     self.ema_model = EMA(
-        #         self.unwrap(self.model),
-        #         forward_method_names = ('sample',),
-        #         **ema_kwargs
-        #     )
-        #     # self.ema_model = self.accelerator.prepare(self.ema_model)
-        #     self.ema_model.to(self.accelerator.device)
-
         self.accelerator.wait_for_everyone()
 
     def _get_prediction_shape_image(self):

@@ -17,7 +17,7 @@ def generate_vae_samples(model, dataloader, directory, idx_list):
             if count >= n_samples:
                 break
 
-def generate_diff_samples(model, diff_model, directory, idx_list, encoding_shape=None, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
+def generate_diff_samples(model, diff_model, directory, idx_list, image_shape=None, min_pixel=0, max_pixel=1, use_vae=False):
     for i in idx_list:
         batch = diff_model.sample(batch_size=1)
         plot_fn = plot_output_vae if use_vae else plot_non_vae

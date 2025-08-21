@@ -90,4 +90,4 @@ def init_configure_vae(args):
 
 def init_configure_diffusion(vit_size, patch_size, input_shape):
     model_dim = VIT_MODELS[vit_size]
-    return diff_model(model=model_dim, image_size=input_shape, patch_size=patch_size)
+    return diff_model(model=model_dim, image_size=input_shape, patch_size=patch_size), model_dim
