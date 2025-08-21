@@ -141,14 +141,14 @@ def run(args):
     if args.latent_diff:
         from train_utils.trainers import TrainerDiffusion as train_diff
         vae_model = trainer_vae.get_model()
-        diffusion_trainer = train_diff(args, vae_model=vae_model, accelerator=accelerator,           input_shape=train_dataset.get_image_shape(), len_train_data_loader=len_dataloader)
+        diffusion_trainer = train_diff(args, vae_model=vae_model, accelerator=accelerator,           input_shape=train_dataset.get_image_shape(), len_train_dataloader=len_dataloader)
         model_config = diffusion_trainer.get_model_config()
         
 
     if args.diff:
         from train_utils.trainers import TrainerDiffusionNonVAE as train_diff
         print_main(accelerator, f"Running diffusion model without VAE with {len_dataloader} batches", "blue")
-        diffusion_trainer = train_diff(args, accelerator=accelerator,           input_shape=train_dataset.get_image_shape(), len_train_data_loader=len_dataloader)
+        diffusion_trainer = train_diff(args, accelerator=accelerator,           input_shape=train_dataset.get_image_shape(), len_train_dataloader=len_dataloader)
         print_main(accelerator, f"Diffusion model shape: {diffusion_trainer.image_shape}", "blue")
 
     if args.train_diff_from_checkpoint or args.inference:
@@ -206,44 +206,4 @@ def run(args):
 if __name__ == '__main__':
     args = get_args()
     run(args)
-    # try:
-        
-    # except Exception as e:
-    #     accelerator.end_training()
-    #     if accelerator.is_main_process:
-    #         print_color("Experiment Failed", "red")
-    #         print(f"❌ Failed to compute: {e}")
-
-    # elif args.use_vae: #TODO: There might be a better logic to handle this case
-
-    #     # This is for training a diffusion model with a VAE backend. This assumes that the VAE model has been trained and is ready to be used.
-    #     if args.model_name == "vae_kl":
-    #          from train_utils.trainers import TrainerVAE as trainer
-    #     else:
-    #         from train_utils.trainers import TrainerVQ as trainer
-    #     train_pipeline = trainer(args, accelerator,len_dataloader)
-    #     train_pipeline.load_model() # TODO: Pass the correct parameters for the model
-    #     model = train_pipeline.get_model(with_accelerator=False)
-    #     model = accelerator.prepare(model)
-    #     accelerator.wait_for_everyone()
-    #     if accelerator.is_main_process:
-    #         print_color(f"Loaded {args.model_name} model for diffusion training", "blue")
-
-
-        # with open(os.path.join(args.pretrained_vae, "config.json"), "r") as f:
-        #     model_config_load = json.load(f)
-        # accelerator.wait_for_everyone()
-        
-        # safe_tensor_path = os.path.join(args.pretrained_vae, "diffusion_pytorch_model.safetensors")
-   
-        # if not os.path.exists(safe_tensor_path):
-        #     if accelerator.is_main_process:
-        #         print_color(f"Model file not found at {safe_tensor_path}. Please check the path.", "red")
-        #     return
-        # else:
-        #     model = AutoencoderKL.from_pretrained(
-        #         args.pretrained_vae,
-        #     )
-
-        #     model = accelerator.prepare(model)
-        #     accelerator.wait_for_everyone() #TODO: use the trainer to load the parameters and do not do it here
+  

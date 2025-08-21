@@ -47,6 +47,7 @@ class BaseTrainer():
         self.ema_model = EMA(model=model, decay=getattr(args, "ema_decay", 0.9999), device=accelerator.device, dtype=torch.float32, accelerator=accelerator)
         self.optimizer = self._init_optimizer()
         assert len_dataloader is not None, "len_train_train_dataloader must be provided"
+        self.args = args
 
         # Scheduler parameters
         num_training_steps = len_dataloader * args.num_epochs
@@ -346,8 +347,7 @@ class TrainerVQ(BaseTrainer):
                     total_loss += loss.item()
                     num_batches += 1
                 
-          
-            
+        
             # Calculate local average
             if num_batches > 0:
                 avg_loss = total_loss / num_batches
@@ -524,11 +524,7 @@ class TrainerVAE(BaseTrainer):
             avg_loss_tensor = torch.tensor(avg_loss, device=self.accelerator.device)
             gathered_losses = self.accelerator.gather(avg_loss_tensor)
             global_avg_loss = gathered_losses.mean().item()
-            
-            # Only print on main process (moved this outside since you're calling it in run_train)
-            # if self.accelerator.is_main_process:
-            #     print(f"Validation Loss: {global_avg_loss:.4f}")
-        
+                    
         return global_avg_loss
         
 
@@ -538,13 +534,13 @@ class TrainerVAE(BaseTrainer):
         return model
 
 class TrainerDiffusionNonVAE(BaseTrainer):
-    def __init__(self, args, accelerator, len_train_train_dataloader=None, input_shape=None):
+    def __init__(self, args, accelerator, len_train_dataloader=None, input_shape=None):
         assert input_shape is not None, "input_shape must be provided"
         super().__init__(model=init_configure_diffusion(
             vit_size=args.vit_size,
             patch_size=args.patch_size,
             input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
-        ), args=args, accelerator=accelerator, len_dataloader=len_train_train_dataloader)
+        ), args=args, accelerator=accelerator, len_dataloader=len_train_dataloader)
         
         self.accelerator.wait_for_everyone()
         
@@ -609,22 +605,23 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             num_batches = 0
             
             with torch.no_grad():
-                for batch in val_loader:
+                for batch in tqdm(val_loader, desc="Validation", total=len(val_loader)):
                     loss = model(batch)
-                
-                    # Gather losses from all processes
-                    gathered_loss = self.accelerator.gather(loss)
-                    total_loss += gathered_loss.mean().item()
+                    total_loss += loss.item()
                     num_batches += 1
-            
-            # Average across all processes
-            avg_loss = total_loss / num_batches
-            
-            # Only print on main process
-            if self.accelerator.is_main_process:
-                print(f"Validation Loss: {avg_loss:.4f}")
         
-        return avg_loss
+            # Calculate local average
+            if num_batches > 0:
+                avg_loss = total_loss / num_batches
+            else:
+                avg_loss = 0.0
+            
+            # Gather the averaged losses from all processes and compute global average
+            avg_loss_tensor = torch.tensor(avg_loss, device=self.accelerator.device)
+            gathered_losses = self.accelerator.gather(avg_loss_tensor)
+            global_avg_loss = gathered_losses.mean().item()
+                    
+        return global_avg_loss
     
     def save_raw_checkpoint(self, root_dir: str, *, epoch: int, step: int, train_loss: float) -> str:
         """
@@ -720,20 +717,19 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             raise FileNotFoundError(f"checkpoint.pt not found in {directory}")
 
 class TrainerDiffusion(TrainerDiffusionNonVAE):
-    def __init__(self, args, model_vae,  accelerator, len_train_train_dataloader=None, input_shape=None):
+    def __init__(self, args, model_vae,  accelerator, len_train_dataloader=None, input_shape=None):
 
         self.model_vae = self.accelerator.prepare(model_vae)  
         self.image_shape = input_shape
         self.model_vae.eval()
         
-        # self.image_shape = (1, *image_shape)
         if accelerator.is_main_process:
             encoding_shape = self._get_prediction_shape_image()
         else:
             encoding_shape = None
         self.encoding_shape = accelerator.broadcast_object(encoding_shape, src=0)
         del encoding_shape
-        super().__init__(args, accelerator, len_train_train_dataloader=len_train_train_dataloader, input_shape=self.encoding_shape[-1])
+        super().__init__(args, accelerator, len_train_train_dataloader=len_train_dataloader, input_shape=self.encoding_shape[-1])
               
         # ema_kwargs = dict() # TODO: Fix this line of code
 
@@ -819,27 +815,6 @@ class TrainerDiffusion(TrainerDiffusionNonVAE):
         """
         return self.unwrap(self.model_vae)
     
-
-    # def save(self, path):
-    #     #TODO: Use the correct function to save the model that we are working currently
-    #     super().save(path)
-    #     unwrapped_model = self.accelerator.unwrap_model(self.vae_model)
-    #     unwrapped_model.save_pretrained(
-    #     path,
-    #     is_main_process=self.accelerator.is_main_process,
-    #     save_function=self.accelerator.save)
-    #     del unwrapped_model
-
-
-    # def load_weights(self, directory):
-    #     super().load_weights(directory)
-    #     # 1. Load model weights (after .prepare, so we can unwrap)
-    #     self.model_vae = self.accelerator.unwrap_model(self.model_vae)
-    #     self.vae_model.load_pretrained(directory)
-    #     self.model_vae.eval()
-    #     self.vae_model = self.accelerator.prepare(self.vae_model)
-       
-
     
 
 

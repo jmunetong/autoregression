@@ -151,13 +151,13 @@ def update_args(args, state_dict):
 
 def prepare_state_dict(args, accelerator):
     # Make sure that args.diff and args.prettrained_vae are usually used so that VAE does not need to be trained from scratch. 
-    if args.diff and args.pretrained_vae:
-        with open(os.path.join(args.pretrained_vae, "experiment_config.yml"), "r") as file:
+    if args.latent_diff and args.pretrained_vae_path is not None:
+        with open(os.path.join(args.pretrained_vae_path, "experiment_config.yml"), "r") as file:
             state_dict = yaml.safe_load(file)
         update_args(args,state_dict )
 
     # information for saving model-experiment characteristics.
-    md_name = args.model_name if not args.diff else diff_name_config(args.use_vae, args)
+    md_name = args.model_name if not args.diff else diff_name_config(args.latent_diff, args)
     model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
     torch.cuda.empty_cache()
 
