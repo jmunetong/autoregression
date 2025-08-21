@@ -35,6 +35,7 @@ class EMA:
             unwrap_fn: optional callable(model)->base_module to unwrap custom wrappers
         """
         self.decay = float(decay)
+        self.accelerator = accelerator  # Store accelerator reference
         self._unwrap = (
             unwrap_fn if unwrap_fn is not None else
             (accelerator.unwrap_model if accelerator is not None else _generic_unwrap)
@@ -63,38 +64,57 @@ class EMA:
                 tb = tb.to(dtype)
             self.buffers[n] = tb
 
-        print(f"EMA initialized with {len(self.shadow)} parameters and {len(self.buffers)} buffers")
+        # Fix: Check if accelerator exists and is main process
+        if accelerator is not None and accelerator.is_main_process:
+            print(f"EMA initialized with {len(self.shadow)} parameters and {len(self.buffers)} buffers")
+        elif accelerator is None:
+            print(f"EMA initialized with {len(self.shadow)} parameters and {len(self.buffers)} buffers")
 
     @torch.no_grad()
     def update(self, model):
         """Update EMA from a (possibly wrapped) live model."""
-        base = self._unwrap(model)
-        d = self.decay
+        try:
+            base = self._unwrap(model)
+            d = self.decay
 
-        for n, p in base.named_parameters():
-            if n in self.shadow:
-                s = self.shadow[n]
-                # Move source to shadow device to avoid device mismatch
-                src = p.detach().to(s.device)
-                if s.dtype.is_floating_point and src.dtype != s.dtype:
-                    src = src.to(s.dtype)
-                s.mul_(d).add_(src, alpha=(1.0 - d))
+            # Update parameters
+            for n, p in base.named_parameters():
+                if p.requires_grad and n in self.shadow:  # Add requires_grad check
+                    s = self.shadow[n]
+                    # Move source to shadow device to avoid device mismatch
+                    src = p.detach().to(s.device)
+                    if s.dtype.is_floating_point and src.dtype != s.dtype:
+                        src = src.to(s.dtype)
+                    s.mul_(d).add_(src, alpha=(1.0 - d))
 
-        # Keep buffers in sync (copy, no decay)
-        for n, b in base.named_buffers():
-            if n in self.buffers:
-                dst = self.buffers[n]
-                src = b.detach().to(dst.device)
-                if dst.dtype.is_floating_point and src.dtype != dst.dtype:
-                    src = src.to(dst.dtype)
-                dst.copy_(src)
+            # Keep buffers in sync (copy, no decay)
+            for n, b in base.named_buffers():
+                if n in self.buffers:
+                    dst = self.buffers[n]
+                    src = b.detach().to(dst.device)
+                    if dst.dtype.is_floating_point and src.dtype != dst.dtype:
+                        src = src.to(dst.dtype)
+                    dst.copy_(src)
+                    
+        except Exception as e:
+            # Log the error but don't crash training
+            if self.accelerator is not None and self.accelerator.is_main_process:
+                print(f"Error in EMA update: {e}")
+            raise e
 
     @contextlib.contextmanager
     def apply_to(self, model):
         """
         Temporarily swap EMA weights/buffers into the given (possibly wrapped) model.
         Useful for evaluation/saving without permanently overwriting training weights.
+        
+        IMPORTANT: In distributed training, all processes must enter/exit this context
+        manager together to maintain synchronization.
         """
+        # Ensure all processes start applying EMA weights together
+        if self.accelerator is not None:
+            self.accelerator.wait_for_everyone()
+            
         base = self._unwrap(model)
         # Stash originals
         orig_params = {}
@@ -113,6 +133,10 @@ class EMA:
                     orig_buffers[n] = b.data  # Store reference, not clone
                     b.data = self.buffers[n].to(b.device, dtype=b.dtype)
 
+        # Ensure all processes have applied EMA weights before proceeding
+        if self.accelerator is not None:
+            self.accelerator.wait_for_everyone()
+
         try:
             yield
         finally:
@@ -126,6 +150,10 @@ class EMA:
                 for n, b in base.named_buffers():
                     if n in orig_buffers:
                         b.data = orig_buffers[n]
+            
+            # Ensure all processes have restored original weights together
+            if self.accelerator is not None:
+                self.accelerator.wait_for_everyone()
 
     def state_dict(self):
         """Return state dict for saving/loading EMA state."""

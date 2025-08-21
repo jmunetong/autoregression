@@ -206,97 +206,147 @@ class TrainerVQ(BaseTrainer):
         loss_i = beta_recons * recon_loss_i + loss_i
         return loss_i, recon_loss_i
     
-    def step(self, batch, i, epoch, experiment_dict, directory):
-        ## Encoding Step
-        if i == 0 and epoch == 0 and self.accelerator.is_main_process:
-            latents = self.model.encode(batch, return_dict=True).latents
-            experiment_dict["input_shape"] = list(batch.shape[1:])
-            experiment_dict["latent_shape"] = list(latents.shape[1:])
-            self._save_experiment_config(experiment_dict, directory)
-            print(f"Batch shape: {batch.shape}")
-            print(f"Latent sample shape: {latents.shape}")
-            out = self.model.decode(latents, return_dict=True)
+    def is_wrapped(self):
+        """Check if model is wrapped by distributed training frameworks"""
+        from torch.nn.parallel import DistributedDataParallel
+        from torch.distributed.fsdp import FullyShardedDataParallel
+        
+        # Check for common wrapper types
+        wrapper_types = (DistributedDataParallel,)
+        
+        # Add FSDP if available
+        try:
+            wrapper_types += (FullyShardedDataParallel,)
+        except ImportError:
+            pass
+        
+        return isinstance(self.model, wrapper_types) or hasattr(self.model, 'module')
 
-        else:
-            out = self.model(batch, return_dict=True)
+    def step(self, batch, i, epoch, experiment_dict, directory):
+        # ALL processes run the same forward pass
+        out = self.model(batch, return_dict=True)
+        
+        # Only main process handles logging/saving (non-blocking operations)
+        if i == 0 and epoch == 0 and self.accelerator.is_main_process:
+            try:
+                # Get model for encoding (separate from main forward pass)
+                if self.is_wrapped():
+                    unwrapped_model = self.accelerator.unwrap_model(self.model)
+                    with torch.no_grad():  # Don't interfere with gradients
+                        latents = unwrapped_model.encode(batch[:1], return_dict=True).latents
+                else:
+                    with torch.no_grad():
+                        latents = self.model.encode(batch, return_dict=True).latents
+
+                # Save configuration
+                experiment_dict["input_shape"] = list(batch.shape[1:])
+                experiment_dict["latent_shape"] = list(latents.shape[1:])
+                self._save_experiment_config(experiment_dict, directory)
+                print(f"Batch shape: {batch.shape}")
+                print(f"Latent sample shape: {latents.shape}")
+                
+            except Exception as e:
+                print(f"Warning: Configuration saving failed: {e}")
         
         return out
 
-    def run_train(self, train_dataloader, val_datalaoder, experiment_dict, directory):
+    def run_train(self, train_dataloader, val_dataloader, experiment_dict, directory):
         best_loss = float('inf')
         beta_recons = self.args.beta_recons
+        
         for epoch in range(self.args.num_epochs if not self.args.test_pipeline else TEST_LEGNTH):
             if self.accelerator.is_main_process:
                 print(f"Epoch {epoch+1}/{self.args.num_epochs}")    
+            
             epoch_loss = 0.0
             epoch_recon_loss = 0.0
+            self.model.train()
 
-            for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):
-                self.model.train()
-                # Important before starting one forward pass
+            for i, batch in tqdm(enumerate(train_dataloader), 
+                    total=len(train_dataloader), 
+                    desc="Training",
+                    disable=not self.accelerator.is_main_process):
+                
+                
                 self.optimizer.zero_grad()
                 batch = batch.contiguous()
+                
                 if self.args.test_pipeline and i > TEST_LEGNTH:
                     break
+                    
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     print(f"Batch shape: {batch.shape}")
 
+                # Forward pass
                 out = self.step(batch, i, epoch, experiment_dict, directory)
-                self.accelerator.wait_for_everyone()
-                # Loss Function Computation
+                
+                # Loss computation
                 loss_i, recon_loss_i = self.compute_loss(out, batch, beta_recons)
+
+                # Backward pass
+                self.accelerator.wait_for_everyone()
                 self.accelerator.backward(loss_i)
                 self.optimizer.step()
                 self.scheduler.step()
-                self.accelerator.wait_for_everyone()
-                # Track metrics
+
+                # Add process ID to debug EMA
+                self.ema_model.update(self.model)
+                                
+                # Track metrics (local accumulation)
                 epoch_loss += loss_i.item()
                 epoch_recon_loss += recon_loss_i.item()
-                self.ema_model.update(self.model)
-
-                
-                # Step optimizer after accumulating gradients
-                self.optimizer.zero_grad()
+                self.accelerator.wait_for_everyone()
             # Update epoch metrics with batch averages
+    
             epoch_loss /= len(train_dataloader)
             epoch_recon_loss /= len(train_dataloader)
-            if self.accelerator.is_main_process:
-                all_epoch_losses = self.accelerator.gather(torch.tensor(epoch_loss))
-                global_avg_loss = all_epoch_losses.mean().item()
-                print(f"Global average epoch {epoch + 1} loss: {global_avg_loss}")
             self.current_epoch += 1
-            self.accelerator.wait_for_everyone()
+            all_epoch_losses = self.accelerator.gather(torch.tensor(epoch_loss, device=self.accelerator.device))
+            global_avg_loss = all_epoch_losses.mean().item()
+
+            # Only main process prints and saves
             if self.accelerator.is_main_process:
-                self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=epoch_loss)
-    
-            self.accelerator.wait_for_everyone()
-            val_loss = self.validate_with_ema(val_datalaoder)
+                print(f"Global average epoch {epoch + 1} train loss: {global_avg_loss}")
+                self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=global_avg_loss)
+            
+            # Validation (all processes participate)
+            val_loss = self.validate_with_ema(val_dataloader)
+            
             if self.accelerator.is_main_process:
                 print(f"Validation Loss: {val_loss:.4f}")
-            # Saving Best model
-            if val_loss < best_loss:
+            
+            # Save best model
+            is_best = val_loss < best_loss
+            if is_best:
                 best_loss = val_loss
                 if self.accelerator.is_main_process:
                     print(f"New best loss: {best_loss}")
-                self.save_ema_check_point(directory)
+                    self.save_ema_check_point(directory)
+            
+            # Optional: Sync all processes at the end of epoch
             self.accelerator.wait_for_everyone()
     
     def validate_with_ema(self, val_loader):
         self.model.eval()
-        
+
         # Apply EMA weights temporarily
         with self.ema_model.apply_to(self.model):
             total_loss = 0.0
             num_batches = 0
             
             with torch.no_grad():
-                for batch in val_loader:
+                for _, batch in tqdm(enumerate(val_loader), 
+                    total=len(val_loader), 
+                    desc="Validation EMA",
+                    disable=not self.accelerator.is_main_process):
                     outputs = self.model(batch, return_dict=True)
                     loss, _ = self.compute_loss(outputs, batch, self.args.beta_recons)
                     
-                    # Just accumulate local losses (no gather needed here)
+                    # Just accumulate local losses
                     total_loss += loss.item()
                     num_batches += 1
+                
+          
             
             # Calculate local average
             if num_batches > 0:
@@ -306,12 +356,12 @@ class TrainerVQ(BaseTrainer):
             
             # Gather the averaged losses from all processes and compute global average
             avg_loss_tensor = torch.tensor(avg_loss, device=self.accelerator.device)
+                  # CRITICAL: Wait for all processes to finish the validation loop
+            self.accelerator.wait_for_everyone()
             gathered_losses = self.accelerator.gather(avg_loss_tensor)
             global_avg_loss = gathered_losses.mean().item()
-            
-            # Only print on main process (moved this outside since you're calling it in run_train)
-            # if self.accelerator.is_main_process:
-            #     print(f"Validation Loss: {global_avg_loss:.4f}")
+            # Final sync to ensure all processes are done
+            self.accelerator.wait_for_everyone()
         
         return global_avg_loss
     
@@ -329,12 +379,20 @@ class TrainerVAE(BaseTrainer):
                          accelerator=accelerator, 
                          len_dataloader=len_dataloader)
         
+    
+        
     def step(self, batch, i, epoch, experiment_dict, directory):
         """
         Perform a single step of the VAE training.
         """
         ## Encoding Step
-        posterior = self.model.encode(batch).latent_dist
+        if not hasattr(self.model, 'module'):
+            # Model is wrapped (DDP, FSDP, etc.) - unwrap it
+            posterior = self.model.encode(batch).latent_dist
+        else:
+            posterior = self.accelerator.unwrap_model(self.model).encode(batch).latent_dist
+            # Model is not wrapped - use directly
+            
         mu_posterior = posterior.mean
         logvar_posterior = posterior.logvar
         
@@ -346,7 +404,10 @@ class TrainerVAE(BaseTrainer):
             self._save_experiment_config(experiment_dict, directory)
 
         self.accelerator.wait_for_everyone()
-        recon_i = self.model.decode(posterior_sample).sample
+        if not hasattr(self.model, 'module'):
+            recon_i = self.model.decode(posterior_sample)
+        else:
+            recon_i = self.accelerator.unwrap_model(self.model).decode(posterior_sample)
 
         return recon_i, logvar_posterior, mu_posterior
     
@@ -355,7 +416,8 @@ class TrainerVAE(BaseTrainer):
         kl_loss_i = -0.5 * torch.sum(1 + logvar_posterior - mu_posterior.pow(2) - torch.exp(logvar_posterior))
         kl_loss_i /= batch_size
         kl_loss_i = self.annealer(kl_loss_i) if self.use_annealing else kl_loss_i
-        recon_loss_i = self.recons_loss(recon_i, batch)
+         
+        recon_loss_i = self.recons_loss(recon_i.sample, batch)
         loss_i = beta_recons * recon_loss_i + kl_loss_i 
         return loss_i, recon_loss_i, kl_loss_i
     
@@ -373,20 +435,22 @@ class TrainerVAE(BaseTrainer):
             epoch_recon_loss = 0.0
             self.model.train()
 
-            for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc="Training"):
+            for i, batch in tqdm(enumerate(train_dataloader), 
+                     total=len(train_dataloader), 
+                     desc="Training",
+                     disable=not self.accelerator.is_main_process):
                 # Important before starting one forward pass
-                self.optimizer.zero_grad()
-                batch = batch.contiguous()
                 if self.args.test_pipeline and i > TEST_LEGNTH:
                     break
                 if i == 0 and epoch == 0 and self.accelerator.is_main_process:
                     print(f"Batch shape: {batch.shape}")
-            
+                self.optimizer.zero_grad()
+                batch = batch.contiguous()
+                # ic("Running forward step")
                 recon_i, logvar_posterior, mu_posterior = self.step(batch, i, epoch, experiment_dict, directory)
-                
+                # ic("computing loss")
                 loss_i, recon_loss_i, kl_loss_i = self.compute_loss(recon_i, logvar_posterior, mu_posterior, batch, batch_size=batch.size(0), beta_recons=beta_recons)
         
-    
                 self.accelerator.backward(loss_i)
                 
                 # Step optimizer after accumulating gradients
@@ -399,22 +463,25 @@ class TrainerVAE(BaseTrainer):
                 epoch_loss += loss_i.item()
                 epoch_kl_loss += kl_loss_i.item()
                 epoch_recon_loss += recon_loss_i.item()
-                tqdm.write(f"Epoch {epoch + 1} - Batch {i+1}/{len(train_dataloader)} - Loss: {loss_i.item():.4f}")
-                
-                
+
+            self.accelerator.wait_for_everyone()  
             # Update epoch metrics with batch averages
             epoch_loss /= len(train_dataloader)
             epoch_kl_loss /= len(train_dataloader)
             epoch_recon_loss /= len(train_dataloader)
             self.current_epoch += 1
             
-            self.accelerator.wait_for_everyone()
-            if self.accelerator.is_main_process:
-                print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-                self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=epoch_loss)
+                    
+            all_epoch_losses = self.accelerator.gather(torch.tensor(epoch_loss, device=self.accelerator.device))
+            global_avg_loss = all_epoch_losses.mean().item()
 
+            # Only main process prints
+            if self.accelerator.is_main_process:
+                print(f"Global average epoch {epoch + 1} train loss: {global_avg_loss}")
+            self.accelerator.wait_for_everyone()
             self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss, "recon_loss": epoch_recon_loss, "kl_loss": epoch_kl_loss})
             val_loss = self.validate_with_ema(val_dataloader)
+
             if self.accelerator.is_main_process:
                 print(f"Validation Loss: {val_loss:.4f}")
             # Saving Best model
@@ -428,32 +495,42 @@ class TrainerVAE(BaseTrainer):
 
     def validate_with_ema(self, val_loader):
         self.model.eval()
-        
+
         # Apply EMA weights temporarily
         with self.ema_model.apply_to(self.model):
-            total_loss = 0
+            total_loss = 0.0
             num_batches = 0
             
             with torch.no_grad():
-                for batch in val_loader:
+                if self.accelerator.is_main_process:
+                    print("Validating with EMA weights...")
+                for batch in tqdm(val_loader, desc="Validation", total=len(val_loader)):
+
                     recon_i, logvar_posterior, mu_posterior = self.step(batch, i=2, epoch=2, experiment_dict=None, directory=None)
 
-                    loss =self.compute_loss(recon_i=recon_i, logvar_posterior=logvar_posterior, mu_posterior=mu_posterior, batch=batch, batch_size=batch.size(0), beta_recons=self.args.beta_recons)[0]
+                    loss = self.compute_loss(recon_i=recon_i, logvar_posterior=logvar_posterior, mu_posterior=mu_posterior, batch=batch, batch_size=batch.size(0), beta_recons=self.args.beta_recons)[0]
                     
-                    # Gather losses from all processes
-                    gathered_loss = self.accelerator.gather(loss)
-                    total_loss += gathered_loss.mean().item()
+                    # Just accumulate local losses (no gather needed here)
+                    total_loss += loss.item()
                     num_batches += 1
-            
-            # Average across all processes
-            avg_loss = total_loss / num_batches
-            
-            # Only print on main process
-            if self.accelerator.is_main_process:
-                print(f"Validation Loss: {avg_loss:.4f}")
         
-        return avg_loss
-    
+            # Calculate local average
+            if num_batches > 0:
+                avg_loss = total_loss / num_batches
+            else:
+                avg_loss = 0.0
+            
+            # Gather the averaged losses from all processes and compute global average
+            avg_loss_tensor = torch.tensor(avg_loss, device=self.accelerator.device)
+            gathered_losses = self.accelerator.gather(avg_loss_tensor)
+            global_avg_loss = gathered_losses.mean().item()
+            
+            # Only print on main process (moved this outside since you're calling it in run_train)
+            # if self.accelerator.is_main_process:
+            #     print(f"Validation Loss: {global_avg_loss:.4f}")
+        
+        return global_avg_loss
+        
 
     def _init_model(self):
         assert self.args.model_name.startswith("vae"), "Model name must start with 'vae' for VAETrainer"
@@ -641,8 +718,6 @@ class TrainerDiffusionNonVAE(BaseTrainer):
             return epoch, loss
         else:
             raise FileNotFoundError(f"checkpoint.pt not found in {directory}")
-
-       
 
 class TrainerDiffusion(TrainerDiffusionNonVAE):
     def __init__(self, args, model_vae,  accelerator, len_train_train_dataloader=None, input_shape=None):
