@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from icecream import ic
 import math
 from math import sqrt
 from typing import Literal
@@ -18,6 +18,7 @@ from einops.layers.torch import Rearrange
 from tqdm import tqdm
 
 from x_transformers import Decoder
+from .loss import adaptive_weighted_loss
 
 # helpers
 
@@ -164,18 +165,20 @@ class ElucidatedDiffusion(Module):
         dim: int,
         net: MLP,
         *,
-        num_sample_steps = 32, # number of sampling steps
+        num_sample_steps = 64, # number of sampling steps
         sigma_min = 0.002,     # min noise level
-        sigma_max = 80,        # max noise level
+        sigma_max = 10,        # max noise level
         sigma_data = 0.5,      # standard deviation of data distribution
         rho = 7,               # controls the sampling schedule
         P_mean = -1.2,         # mean of log-normal distribution from which noise is drawn for training
-        P_std = 1.2,           # standard deviation of log-normal distribution from which noise is drawn for training
-        S_churn = 80,          # parameters for stochastic sampling - depends on dataset, Table 5 in apper
+        P_std = 0.8,           # standard deviation of log-normal distribution from which noise is drawn for training
+        S_churn = 5,          # parameters for stochastic sampling - depends on dataset, Table 5 in apper
         S_tmin = 0.05,
         S_tmax = 50,
         S_noise = 1.003,
-        clamp_during_sampling = True
+        clamp_during_sampling = True,
+        reshape_to_img = None,
+        reshape_to_seq = None
     ):
         super().__init__()
 
@@ -201,6 +204,8 @@ class ElucidatedDiffusion(Module):
         self.S_noise = S_noise
 
         self.clamp_during_sampling = clamp_during_sampling
+        self.reshape_to_img = reshape_to_img
+        self.reshape_to_seq = reshape_to_seq
 
     @property
     def device(self):
@@ -325,7 +330,7 @@ class ElucidatedDiffusion(Module):
     def noise_distribution(self, batch_size):
         return (self.P_mean + self.P_std * torch.randn((batch_size,), device = self.device)).exp()
 
-    def forward(self, seq, *, cond):
+    def forward(self, seq, *, cond, b):
         batch_size, dim, device = *seq.shape, self.device
 
         assert dim == self.dim, f'dimension of sequence being passed in must be {self.dim} but received {dim}'
@@ -335,16 +340,32 @@ class ElucidatedDiffusion(Module):
 
         noise = torch.randn_like(seq)
 
-        noised_seq = seq + padded_sigmas * noise  # alphas are 1. in the paper
+        noised_seq = seq + padded_sigmas * noise  # alphas are 1. in the paper[
+
 
         denoised = self.preconditioned_network_forward(noised_seq, sigmas, cond = cond)
 
-        losses = F.mse_loss(denoised, seq, reduction = 'none')
-        losses = reduce(losses, 'b ... -> b', 'mean')
+        # losses = F.mse_loss(denoised, seq, reduction = 'none')
+        # losses = reduce(losses, 'b ... -> b', 'mean')
 
-        losses = losses * self.loss_weight(sigmas)
+        # losses = losses * self.loss_weight(sigmas)
 
-        return losses.mean()
+        # # return losses.mean()
+        # per_pixel_loss = F.mse_loss(denoised, seq, reduction = 'none')
+        # alpha = 0.001  # You can tune this (5.0 to 10.0 works well for sparse, bright images)
+        # intensity_weight = 1.0 + alpha * seq.pow(2)  # or seq.abs() for signed values
+
+        # # Apply intensity weights
+        # weighted_pixel_loss = per_pixel_loss * intensity_weight
+
+        # # Reduce spatial dimensions
+        # losses = reduce(weighted_pixel_loss, 'b ... -> b', 'mean')
+
+        # # Apply EDM loss weighting
+        # losses = losses * self.loss_weight(sigmas)
+        # l = losses.mean()
+        l = adaptive_weighted_loss(denoised, seq, kernel_size=16, weight_factor=2.0, reshape_to_img = self.reshape_to_img, reshape_to_seq = self.reshape_to_seq, batch_size=b) #TODO: Verify these values
+        return l
 
 # main model, a decoder with continuous wrapper + small denoising mlp
 
@@ -355,7 +376,7 @@ class AutoregressiveDiffusion(Module):
         *,
         max_seq_len,
         depth = 8,
-        dim_head = 64,
+        dim_head = 1024,
         heads = 8,
         mlp_depth = 3,
         mlp_width = None,
@@ -364,13 +385,16 @@ class AutoregressiveDiffusion(Module):
         mlp_kwargs: dict = dict(),
         diffusion_kwargs: dict = dict(
             clamp_during_sampling = True
-        )
+        ),
+        reshape_to_img = None,
+        reshape_to_seq = None
     ):
         super().__init__()
 
         self.start_token = nn.Parameter(torch.zeros(dim))
         self.max_seq_len = max_seq_len
         self.abs_pos_emb = nn.Embedding(max_seq_len, dim)
+
 
         dim_input = default(dim_input, dim)
         self.dim_input = dim_input
@@ -395,6 +419,8 @@ class AutoregressiveDiffusion(Module):
         self.diffusion = ElucidatedDiffusion(
             dim_input,
             self.denoiser,
+            reshape_to_img= reshape_to_img,
+            reshape_to_seq= reshape_to_seq,
             **diffusion_kwargs
         )
 
@@ -442,7 +468,8 @@ class AutoregressiveDiffusion(Module):
         seq
     ):
         b, seq_len, dim = seq.shape
-
+        # import sys;
+        # sys.exit(1)
         assert dim == self.dim_input
         assert seq_len == self.max_seq_len
 
@@ -465,7 +492,7 @@ class AutoregressiveDiffusion(Module):
         target, _ = pack_one(target, '* d')
         cond, _ = pack_one(cond, '* d')
 
-        diffusion_loss = self.diffusion(target, cond = cond)
+        diffusion_loss = self.diffusion(target, cond = cond, b=b)
 
         return diffusion_loss
 
@@ -483,43 +510,35 @@ class ImageAutoregressiveDiffusion(Module):
         *,
         image_size,
         patch_size,
-        channels = 3,
+        channels = 1,
         model: dict = dict(),
     ):
         super().__init__()
         assert divisible_by(image_size, patch_size)
-
         num_patches = (image_size // patch_size) ** 2
         dim_in = channels * patch_size ** 2
-
         self.image_size = image_size
         self.patch_size = patch_size
 
         self.to_tokens = Rearrange('b c (h p1) (w p2) -> b (h w) (c p1 p2)', p1 = patch_size, p2 = patch_size)
-
+        self.to_image = Rearrange('b (h w) (c p1 p2) -> b c (h p1) (w p2)', p1 = patch_size, p2 = patch_size, h = int(math.sqrt(num_patches)))
+    
         self.model = AutoregressiveDiffusion(
             **model,
             dim_input = dim_in,
-            max_seq_len = num_patches
+            max_seq_len = num_patches,
+            reshape_to_img = self.to_image,
+            reshape_to_seq = self.to_tokens
         )
 
-        self.to_image = Rearrange('b (h w) (c p1 p2) -> b c (h p1) (w p2)', p1 = patch_size, p2 = patch_size, h = int(math.sqrt(num_patches)))
+        
 
-    def sample(self, batch_size = 1, prompt = None):
-        tokens = self.model.sample(batch_size = batch_size, prompt = prompt)
+    def sample(self, batch_size = 1):
+        tokens = self.model.sample(batch_size = batch_size)
         images = self.to_image(tokens)
         return unnormalize_to_zero_to_one(images)
 
     def forward(self, images):
         images = normalize_to_neg_one_to_one(images)
-        tokens = self.to_tokens(images)
-        return self.model(tokens)
-    
-    def sample_conditioning(self, images):
-        """
-        Sample conditioning tokens from the images.
-        This is useful for training the model with conditioning.
-        """
-        images = normalize_to_neg_one_to_one(images)
-        tokens = self.to_tokens(images)
-        
+        images = self.to_tokens(images)
+        return self.model(images)
