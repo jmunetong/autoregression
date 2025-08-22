@@ -11,6 +11,9 @@ import json
 from plot import plot_reconstruction, plot_diff, transform_to_image
 
 
+def is_wrapped(model, accelerator):
+    return accelerator.unwrap_model(model) if hasattr(model, 'module') else model
+
 def load_zarr_files(directory_list, data_id):
     """
     Load Zarr files from a list of directories.

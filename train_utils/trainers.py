@@ -576,14 +576,21 @@ class TrainerDiffusionNonVAE(BaseTrainer):
                 
                 self.accelerator.wait_for_everyone()
 
-                epoch_loss += self.accelerator.gather(loss_i.mean().item())
+                epoch_loss += loss_i.item()
             epoch_loss /= len(train_dataloader)
+
+            self.accelerator.wait_for_everyone()  
+            # Update epoch metrics with batch averages
+                        
+            all_epoch_losses = self.accelerator.gather(torch.tensor(epoch_loss, device=self.accelerator.device))
+            global_avg_loss = all_epoch_losses.mean().item()
+
             if self.accelerator.is_main_process:
-                print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
-            self.accelerator.log({"epoch": epoch+1, "loss": epoch_loss})
+                print(f"Epoch {epoch+1}, Loss: {global_avg_loss}")
+            self.accelerator.log({"epoch": epoch+1, "loss": global_avg_loss})
             self.current_epoch +=1
             val_loss = self.validate_with_ema(val_dataloader)
-            self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=epoch_loss)
+            self.save_raw_checkpoint(directory, epoch=epoch+1, step=i+1, train_loss=global_avg_loss)
 
             if self.accelerator.is_main_process:
                 print(f"Validation Loss: {val_loss:.4f}")

@@ -186,15 +186,14 @@ def run(args):
     idx_list = list(range(start, end))
 
     accelerator.end_training()
-
     # Inference generation
     if not args.diff and not args.latent_diff:
-        generate_vae_samples(trainer_vae.get_model().eval(), val_dataloader, directory, idx_list=idx_list)
+        generate_vae_samples(trainer_vae.get_model(with_accelerator=False).eval(), val_dataloader, directory, idx_list=idx_list)
     else:
         print_main(accelerator, f"Generating {args.num_samples} samples with diffusion model", "blue")
         min_pixel, max_pixel = train_dataset.get_min_max()
-    
-        generate_diff_samples(diffusion_trainer.get_model().eval(),  directory, idx_list=idx_list,  min_pixel=min_pixel, max_pixel=max_pixel, use_vae=args.latent_diff)
+        m=None if not args.latent_diff else trainer_vae.get_model(with_accelerator=False).eval()
+        generate_diff_samples(model=m, diff_model=diffusion_trainer.get_model(with_accelerator=False).eval(),  directory=directory, idx_list=idx_list,  min_pixel=min_pixel, max_pixel=max_pixel, use_vae=args.latent_diff)
  
         if args.latent_diff:
             print_main(accelerator, "Generating samples with VAE", "blue")

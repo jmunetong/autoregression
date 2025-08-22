@@ -7,7 +7,7 @@ EPOCHS=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --test)
+    -t)
       TEST_FLAG="--test"
       shift
       ;;
@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown option $1"
-      echo "Usage: $0 [--test] [--avg_pooling] [--epochs NUM_EPOCHS]"
+      echo "Usage: $0 [-t] [--avg_pooling] [--epochs NUM_EPOCHS]"
       exit 1
       ;;
   esac
@@ -36,7 +36,10 @@ LOSSES=("mse" "l1" "iwmse")
 DATASETS=(522 422)
 
 # Build the command
-CMD="accelerate launch --multi_gpu run_experiment.py --diff --diff_epochs $NUM_EPOCHS --lr \"3e-4\" --pretrained_vae \"experiments/vae_kl/250527-0953_vae_kl_d522_c5502af7\""
+CMD="accelerate launch --multi_gpu run_experiment.py --diff --diff_epochs $NUM_EPOCHS --lr \"3e-4\" --train_diff_from_scratch"
+
+
+# --pretrained_vae \"experiments/vae_kl/250527-0953_vae_kl_d522_c5502af7\""
 
 # Add optional flags
 if [[ -n "$TEST_FLAG" ]]; then
