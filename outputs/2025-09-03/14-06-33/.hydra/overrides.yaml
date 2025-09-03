@@ -1,0 +1,3 @@
+- model=diff
+- training.train_diff_from_scratch=true
+- training.test_pipeline=true

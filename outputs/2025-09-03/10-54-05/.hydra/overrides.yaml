@@ -1,0 +1,3 @@
+- diffusion=direct
+- model.train_diff_from_scratch=true
+- test_pipeline=true

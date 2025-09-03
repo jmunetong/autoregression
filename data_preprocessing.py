@@ -111,6 +111,7 @@ def create_train_val_datasets_zarr_split(data_dir, data_id, train_ratio=0.8,
     
     # Create datasets with specific zarr files
     train_dataset = XrdDataset(data_dir, data_id, zarr_indices=train_zarr_indices, **dataset_kwargs)
+    print(train_dataset.get_image_shape())
     val_dataset = XrdDataset(data_dir, data_id, zarr_indices=val_zarr_indices, **dataset_kwargs)
     
     return train_dataset, val_dataset

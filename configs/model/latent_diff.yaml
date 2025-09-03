@@ -1,0 +1,7 @@
+# configs/model/latent_diff.yaml
+model_name: latent_diff
+latent_diff: true   # Explicitly set to true for latent diffusion
+diff_epochs: 10
+patch_size: 16
+vit_size: base  # choices: [base, large, huge]
+latent_channels: 3
