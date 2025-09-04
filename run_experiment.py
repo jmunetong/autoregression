@@ -200,8 +200,6 @@ def run(args):
             generate_vae_samples(trainer_vae.get_model().eval(), val_dataloader, directory, idx_list=idx_list)
 
 
-
-
 if __name__ == '__main__':
     args = get_args()
     run(args)

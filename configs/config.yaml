@@ -1,0 +1,9 @@
+# configs/config.yaml
+defaults:
+  - model: vae_kl
+  - training: default
+  - data: default
+  - inference: default
+  - _self_
+
+# Override any defaults here if needed
