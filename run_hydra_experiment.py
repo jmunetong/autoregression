@@ -130,6 +130,7 @@ def run(cfg: DictConfig) -> None:
         config=cfg_dict
     )
     
+    
     if args.train_vae_from_checkpoint and args.pretrained_vae_path is None:
         raise ValueError("Please provide a path to the pretrained VAE model using pretrained_vae_path")
     
