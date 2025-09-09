@@ -7,3 +7,10 @@ defaults:
   - _self_
 
 # Override any defaults here if needed
+# hydra:
+#   run:
+#     # final per-run output folder
+#     dir: ${exp.root}/${exp.name}
+#   # where Hydra writes config.yaml, hydra.yaml, overrides.yaml inside run dir
+#   # set to null to put them directly in run dir
+#   output_subdir: .hydra

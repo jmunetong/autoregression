@@ -1,4 +1,4 @@
-# accelerate_config.yaml - Configuration for Frontier AMD GPUs
+# accelerate_config.yaml - Configuration for 10 Frontier nodes (80 GPUs)
 compute_environment: LOCAL_MACHINE
 distributed_type: MULTI_GPU
 downcast_bf16: 'no'
@@ -6,8 +6,8 @@ gpu_ids: all
 machine_rank: 0
 main_training_function: main
 mixed_precision: bf16  # Use bfloat16 for AMD GPUs
-num_machines: 1
-num_processes: 8       # 8 GPUs per node
+num_machines: 10       # 10 nodes
+num_processes: 80      # 80 GPUs total (10 nodes × 8 GPUs each)
 rdzv_backend: static
 same_network: true
 tpu_env: []

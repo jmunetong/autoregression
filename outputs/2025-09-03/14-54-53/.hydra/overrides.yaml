@@ -1,6 +1,0 @@
-- model=vq
-- training.train_vae_from_scratch=true
-- training.test_pipeline=true
-- training.num_epochs=5
-- training.lr=5e-4
-- model.latent_channels=8

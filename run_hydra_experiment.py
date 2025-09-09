@@ -3,6 +3,7 @@ import json
 from omegaconf import DictConfig, OmegaConf
 import hydra
 from hydra import compose, initialize
+from hydra.core.hydra_config import HydraConfig
 
 from accelerate import Accelerator
 import torch.distributed as dist
@@ -10,13 +11,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from train_utils.configs import *
-
-from utils import print_color, prepare_state_dict
+from utils import print_color, prepare_state_dict, create_args_compatibility
 from plot import generate_vae_samples, generate_diff_samples
 from data_preprocessing import create_train_val_datasets_zarr_split
 
-
-accelerator = Accelerator(log_with="wandb")
 
 
 def print_main(accelerator, message, color="white"):
@@ -24,87 +22,19 @@ def print_main(accelerator, message, color="white"):
         print_color(message, color)
 
 
-def create_args_compatibility(cfg: DictConfig):
-    """Convert Hydra config to args-like object for backward compatibility"""
-    class Args:
-        def __getattr__(self, name):
-            # Fallback for any missing attributes
-            print(f"Warning: Accessing undefined attribute '{name}', returning None")
-            return None
-            
-        def __setattr__(self, name, value):
-            # Allow setting new attributes
-            super().__setattr__(name, value)
-    
-    args = Args()
-    
-    # Model parameters
-    args.model_name = cfg.model.model_name
-    args.latent_channels = getattr(cfg.model, 'latent_channels', 4)
-    
-    # Training parameters
-    args.batch_size = cfg.training.batch_size
-    args.test_pipeline = cfg.training.test_pipeline
-    args.num_epochs = cfg.training.num_epochs
-    args.lr = cfg.training.lr
-    args.weight_decay = cfg.training.weight_decay
-    args.beta_recons = cfg.training.beta_recons
-    args.recons_loss = cfg.training.recons_loss
-    args.alpha_mse = cfg.training.alpha_mse
-    args.ema_decay = cfg.training.ema_decay
-    
-    # Training mode flags
-    args.train_vae_from_checkpoint = cfg.training.train_vae_from_checkpoint
-    args.train_vae_from_scratch = cfg.training.train_vae_from_scratch
-    args.train_diff_from_checkpoint = cfg.training.train_diff_from_checkpoint
-    args.train_diff_from_scratch = cfg.training.train_diff_from_scratch
-    args.pretrained_vae_path = cfg.training.pretrained_vae_path
-    args.pretrained_diff_path = cfg.training.pretrained_diff_path
-    args.use_annealing = cfg.training.use_annealing
-    args.annealing_shape = cfg.training.annealing_shape
-    
-    # Data parameters
-    args.data_id = cfg.data.data_id
-    args.avg_pooling = cfg.data.avg_pooling
-    args.topk = cfg.data.topk
-    args.data_path = cfg.data.data_path
-    args.train_ratio = cfg.data.train_ratio
-    args.seed = cfg.data.seed
-    
-    # Inference parameters
-    args.inference = cfg.inference.inference
-    args.generate_samples = cfg.inference.generate_samples
-    args.num_samples = cfg.inference.num_samples
-    
-    # Diffusion parameters - handle both explicit and inferred flags
-    args.diff = cfg.model.model_name == "diff"
-    args.latent_diff = getattr(cfg.model, 'latent_diff', cfg.model.model_name == "latent_diff")
-    
-    # Diffusion model parameters
-    args.diff_epochs = getattr(cfg.model, 'diff_epochs', 10)
-    args.patch_size = getattr(cfg.model, 'patch_size', 16)
-    args.vit_size = getattr(cfg.model, 'vit_size', 'base')
-    
-    # Additional attributes that might be used in utils.py
-    args.results_dir = "results"
-    
-    # Legacy compatibility attributes (in case they're referenced elsewhere)
-    args.vae_from_scratch = args.train_vae_from_scratch
-    args.diff_from_scratch = args.train_diff_from_scratch
-    
-    return args
-
-
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def run(cfg: DictConfig) -> None:
     # Ensure results directory exists
-    os.makedirs("results", exist_ok=True)
+    accelerator = Accelerator(log_with="wandb")
     
     # Create compatibility layer - convert Hydra config to args-like object
     args = create_args_compatibility(cfg)
     
+    out_dir = HydraConfig.get().runtime.output_dir
+ 
     # Create a shared variable to store the values (pass args, not cfg!)
-    model_id, directory, experiment_dict = prepare_state_dict(args, accelerator)
+    directory, experiment_dict = prepare_state_dict(args, accelerator, out_dir)
+
 
     # Create datasets on all processes (using same seed ensures consistency)
     train_dataset, val_dataset = create_train_val_datasets_zarr_split(
@@ -124,13 +54,21 @@ def run(cfg: DictConfig) -> None:
     train_dataloader, val_dataloader = accelerator.prepare(train_dataloader, val_dataloader)
 
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    cfg_dict['model_id'] = model_id
     accelerator.init_trackers(
         args.model_name,
-        config=cfg_dict
+        config=cfg_dict,
+        init_kwargs={
+            "wandb": {
+                "dir": out_dir, 
+            }
+        },
     )
-    
-    
+
+    print(out_dir, directory, args.data_path)
+    import sys;
+    sys.exit()
+
+        
     if args.train_vae_from_checkpoint and args.pretrained_vae_path is None:
         raise ValueError("Please provide a path to the pretrained VAE model using pretrained_vae_path")
     

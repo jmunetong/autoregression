@@ -37,7 +37,7 @@ def run(cfg: DictConfig) -> None:
     args = Namespace(**args)
     
     # Create a shared variable to store the values
-    model_id, directory, experiment_dict = prepare_state_dict(args, accelerator)
+    directory, experiment_dict = prepare_state_dict(args, accelerator)
 
     # Create datasets on all processes (using same seed ensures consistency)
     train_dataset, val_dataset = create_train_val_datasets_zarr_split(
@@ -58,7 +58,6 @@ def run(cfg: DictConfig) -> None:
 
     # Convert config to dict for wandb
     args_dict = OmegaConf.to_container(cfg, resolve=True)
-    args_dict['model_id'] = model_id
     
     accelerator.init_trackers(
         args.model.model_name,
@@ -74,7 +73,7 @@ def run(cfg: DictConfig) -> None:
     
     # VAE/VQ Training
     if not args.diffusion.diff or args.diffusion.latent_diff: 
-        print_main(accelerator, f"Running experiment {model_id} with model {args.model.model_name}", "blue")
+        print_main(accelerator, f"Running experiment with {args.model.model_name}", "blue")
         
         if args.model.model_name == "vae_kl":
              from train_utils.trainers import TrainerVAE as trainer

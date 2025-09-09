@@ -2,6 +2,7 @@ import time
 import uuid
 import os
 
+from omegaconf import DictConfig
 import zarr
 import numpy as np
 import torch
@@ -57,9 +58,7 @@ def files_to_img(z_arrays, sample_id = None, verbose=False):
         images = np.array(images)
     
     assert num_imges == images.shape[0], "Number of images mismatch"
-    # if images.ndim == 3:
-    #     images = np.expand_dims(images, axis=-1)
-    # assert images.ndim == 4, "Images should be 4D after conversion"
+
     return images
 
 
@@ -87,26 +86,6 @@ def get_device():
     return device
 
 
-# def build_experiment_metadata(args):
-    # metadata = {
-    #     "model_name": args.model_name,
-    #     "data_id": args.data_id,
-    #     "batch_size": args.batch_size,
-    #     "num_epochs": args.num_epochs,
-    #     "beta_recons": args.beta_recons,
-    #     "recons_loss": args.recons_loss,
-    #     "input_shape": None,
-    #     "latent_shape": None,
-    #     "avg_pooling": args.avg_pooling,
-    #     "weight_decay": args.weight_decay,
-    #     "learning_rate": args.lr,
-    #     "latent_channels": args.latent_channels,
-    #     "seed": args.seed,
-    
-    # }
-    # if args.recons_loss == 'iwmse':
-    #     metadata['alpha_mse'] = args.alpha_mse  
-
 def build_experiment_metadata(args):
     # Convert args to dictionary and create a copy
     metadata = vars(args).copy()
@@ -123,12 +102,14 @@ def create_experiment_id(model_name="vae", data_id=522):
     return f"{timestamp}_{model_name}_d{data_id}_{unique_id}"
 
 
-def create_directory(model_name, data_id):
-    experiment_id = create_experiment_id(model_name, data_id)
-    directory = os.path.join("experiments", model_name, experiment_id)
+def create_directory(output_path, model_name, data_id):
+    #TODO: FIX THIS SINCE WE ARE TRYING TO ACCESS THE MODEL FROM THIS SETUP 
+    
+    model_name = f'{model_name}_d{data_id}'
+    directory = os.path.join(output_path, model_name)
     if not os.path.exists(directory):
         os.makedirs(directory)
-    return experiment_id, directory
+    return directory
 
 def print_color(text, color="default"):
     colors = {
@@ -152,7 +133,7 @@ def update_args(args, state_dict):
             setattr(args, key, value)
 
 
-def prepare_state_dict(args, accelerator):
+def prepare_state_dict(args, accelerator, output_path):
     # Make sure that args.diff and args.prettrained_vae are usually used so that VAE does not need to be trained from scratch. 
     if args.latent_diff and args.pretrained_vae_path is not None:
         with open(os.path.join(args.pretrained_vae_path, "experiment_config.yml"), "r") as file:
@@ -163,10 +144,11 @@ def prepare_state_dict(args, accelerator):
     md_name = args.model_name if not args.diff else diff_name_config(args.latent_diff, args)
     model_name_dir = md_name if not args.test_pipeline else f"{md_name}_test"
     torch.cuda.empty_cache()
-
     # Configure training
-    model_id, directory, experiment_dict = configure_training(args, model_name_dir, accelerator)
-    return model_id, directory, experiment_dict
+
+    # (args, output_path, model_name_dir, accelerator)
+    directory, experiment_dict = configure_training(args,output_path,model_name_dir, accelerator)
+    return directory, experiment_dict
 
 def diff_name_config(use_vae, args):
     return f"diff_{args.model_name}" if use_vae else f"diff_non_vae_{args.model_name}"
@@ -189,17 +171,16 @@ def determine_experiment_directory(args):
 
     return directory
 
-def configure_training(args, model_name_dir, accelerator):
+def configure_training(args, output_path, model_name_dir, accelerator):
     # Step 1: Main process creates directory and metadata
     if accelerator.is_main_process:
         if is_experiment_from_scratch(args):
-            model_id, directory = create_directory(model_name_dir, args.data_id)
+            directory = create_directory(output_path, model_name_dir, args.data_id)
             experiment_dict = build_experiment_metadata(args)
         else:
             metadata_path = determine_experiment_directory(args)
             with open(os.path.join(metadata_path, "metadata.json"), 'r') as file:
                 d = json.load(file)
-            model_id = d["model_id"]
             directory = d["directory"]
             experiment_dict = d['experiment_dict']
             del d, metadata_path
@@ -217,7 +198,6 @@ def configure_training(args, model_name_dir, accelerator):
 
         with open(f"{directory}/metadata.json", "w") as f:
             json.dump({
-                "model_id": model_id,
                 "directory": directory_str,
                 "experiment_dict": experiment_dict
             }, f)
@@ -233,7 +213,6 @@ def configure_training(args, model_name_dir, accelerator):
         
         with open(f"{directory}/metadata.json", "r") as f:
             data = json.load(f)
-            model_id = data["model_id"]
             experiment_dict = data["experiment_dict"]
 
     # Clean up the temporary file
@@ -249,5 +228,73 @@ def configure_training(args, model_name_dir, accelerator):
         else:
             print_color("Experiment Running", "Green")
 
-    return model_id, directory, experiment_dict
+    return directory, experiment_dict
     
+def create_args_compatibility(cfg: DictConfig):
+    """Convert Hydra config to args-like object for backward compatibility"""
+    class Args:
+        def __getattr__(self, name):
+            # Fallback for any missing attributes
+            print(f"Warning: Accessing undefined attribute '{name}', returning None")
+            return None
+            
+        def __setattr__(self, name, value):
+            # Allow setting new attributes
+            super().__setattr__(name, value)
+    
+    args = Args()
+    
+    # Model parameters
+    args.model_name = cfg.model.model_name
+    args.latent_channels = getattr(cfg.model, 'latent_channels', 4)
+    
+    # Training parameters
+    args.batch_size = cfg.training.batch_size
+    args.test_pipeline = cfg.training.test_pipeline
+    args.num_epochs = cfg.training.num_epochs
+    args.lr = cfg.training.lr
+    args.weight_decay = cfg.training.weight_decay
+    args.beta_recons = cfg.training.beta_recons
+    args.recons_loss = cfg.training.recons_loss
+    args.alpha_mse = cfg.training.alpha_mse
+    args.ema_decay = cfg.training.ema_decay
+    
+    # Training mode flags
+    args.train_vae_from_checkpoint = cfg.training.train_vae_from_checkpoint
+    args.train_vae_from_scratch = cfg.training.train_vae_from_scratch
+    args.train_diff_from_checkpoint = cfg.training.train_diff_from_checkpoint
+    args.train_diff_from_scratch = cfg.training.train_diff_from_scratch
+    args.pretrained_vae_path = cfg.training.pretrained_vae_path
+    args.pretrained_diff_path = cfg.training.pretrained_diff_path
+    args.use_annealing = cfg.training.use_annealing
+    args.annealing_shape = cfg.training.annealing_shape
+    
+    # Data parameters
+    args.data_id = cfg.data.data_id
+    args.avg_pooling = cfg.data.avg_pooling
+    args.topk = cfg.data.topk
+    args.data_path = cfg.data.data_path
+    args.train_ratio = cfg.data.train_ratio
+    args.seed = cfg.data.seed
+    
+    # Inference parameters
+    args.inference = cfg.inference.inference
+    args.generate_samples = cfg.inference.generate_samples
+    args.num_samples = cfg.inference.num_samples
+    
+    # Diffusion parameters - handle both explicit and inferred flags
+    args.diff = cfg.model.model_name == "diff"
+    args.latent_diff = getattr(cfg.model, 'latent_diff', cfg.model.model_name == "latent_diff")
+    
+    # Diffusion model parameters
+    args.diff_epochs = getattr(cfg.model, 'diff_epochs', 10)
+    args.patch_size = getattr(cfg.model, 'patch_size', 16)
+    args.vit_size = getattr(cfg.model, 'vit_size', 'base')
+
+    
+    # Legacy compatibility attributes (in case they're referenced elsewhere)
+    args.vae_from_scratch = args.train_vae_from_scratch
+    args.diff_from_scratch = args.train_diff_from_scratch
+    
+    return args
+

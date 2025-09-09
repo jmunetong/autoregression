@@ -4,7 +4,7 @@
 # 
 #SBATCH --output=slurm/hydra_experiment.%j.log
 #SBATCH --error=slurm/hydra_experiment.%j.err
-#SBATCH --account=mph121                   # Your ORNL project ID
+#SBATCH --account=AMPH121                   # Your ORNL project ID
 #SBATCH --partition=batch                   # batch is the main partition
 #SBATCH --qos=debug                         # debug queue for faster scheduling
 #SBATCH --time=02:00:00                     # 2 hours walltime
@@ -76,8 +76,8 @@ run_experiment() {
     echo "Batch Size=$batch_size, Epochs=$epochs, Channels=$channels"
     echo "================================================"
     
-    # Use srun with accelerate for proper distributed execution
-    srun --ntasks=8 \
+    # Use srun with accelerate for proper distributed execution across 10 nodes (80 GPUs)
+    srun --ntasks=80 \
          --ntasks-per-node=8 \
          --cpus-per-task=7 \
          --gpus-per-node=8 \
