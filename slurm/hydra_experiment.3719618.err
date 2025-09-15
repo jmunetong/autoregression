@@ -1,0 +1,249 @@
+
+Lmod is automatically replacing "cce/18.0.1" with "amd/6.2.4".
+
+
+Lmod is automatically replacing "PrgEnv-cray/8.6.0" with "PrgEnv-amd/8.6.0".
+
+
+Due to MODULEPATH changes, the following have been reloaded:
+  1) cray-libsci/24.11.0     2) cray-mpich/8.1.31     3) darshan-runtime/3.4.6-mpi
+
+Lmod has detected the following error: This rocm module exists but cannot be
+loaded as requested: rocm/5.4.0
+    ROCM module version must match the currently loaded AMD module version.
+
+    Note: Please use explicit module commands when loading a non-default
+    rocm module.
+
+    To load rocm with the currently loaded amd/6.2.4 module
+    please try:
+          $ module load rocm/6.2.4
+
+While processing the following module(s):
+    Module fullname  Module Filename
+    ---------------  ---------------
+    rocm/5.4.0       /opt/cray/pe/lmod/modulefiles/core/rocm/5.4.0.lua
+
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+srun: error: frontier02122: tasks 0-7: Exited with exit code 2
+srun: Terminating StepId=3719618.0
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+srun: error: frontier08527: tasks 24-31: Exited with exit code 2
+srun: error: frontier02382: tasks 8-15: Exited with exit code 2
+srun: error: frontier08147: tasks 16-23: Exited with exit code 2
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+srun: error: frontier02382: tasks 8-15: Exited with exit code 2
+srun: Terminating StepId=3719618.1
+srun: error: frontier08147: tasks 16-23: Exited with exit code 2
+slurmstepd: error: *** STEP 3719618.1 ON frontier02122 CANCELLED AT 2025-09-04T16:58:05 ***
+srun: error: frontier08527: tasks 24-31: Exited with exit code 2
+srun: error: frontier02122: tasks 0-7: Exited with exit code 2
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+srun: error: frontier08147: tasks 16-23: Exited with exit code 2
+srun: Terminating StepId=3719618.2
+srun: error: frontier08527: tasks 24-31: Exited with exit code 2
+srun: error: frontier02122: tasks 0-7: Exited with exit code 2
+srun: error: frontier02382: tasks 8-15: Exited with exit code 2
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+srun: error: frontier08527: tasks 24-31: Exited with exit code 2
+srun: Terminating StepId=3719618.3
+srun: error: frontier02122: tasks 0-7: Exited with exit code 2
+srun: error: frontier08147: tasks 16-23: Exited with exit code 2
+srun: error: frontier02382: tasks 8-15: Exited with exit code 2
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+srun: error: frontier08147: tasks 16-23: Exited with exit code 2
+srun: Terminating StepId=3719618.4
+srun: error: frontier08527: tasks 24-31: Exited with exit code 2
+srun: error: frontier02122: tasks 0-7: Exited with exit code 2
+srun: error: frontier02382: tasks 8-15: Exited with exit code 2
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+slurmstepd: error: execve(): accelerate: No such file or directory
+srun: error: frontier02122: tasks 0-7: Exited with exit code 2
+srun: Terminating StepId=3719618.5
+srun: error: frontier08147: tasks 16-23: Exited with exit code 2
+srun: error: frontier08527: tasks 24-31: Exited with exit code 2
+srun: error: frontier02382: tasks 8-15: Exited with exit code 2

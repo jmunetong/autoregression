@@ -1,0 +1,2 @@
+#!/bin/bash
+salloc -A mph121 -t 2:00:00 -q debug -p batch -N 10 --ntasks-per-node=8 --gpus-per-node=8 --mail-type=BEGIN --mail-user=jmuneton@stanford.edu
