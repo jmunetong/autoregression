@@ -1,0 +1,30 @@
+
+# configs/training/default.yaml
+batch_size: 2
+test_pipeline: false
+
+# Simple approach - set suffix as string directly
+test_suffix: ""
+
+
+num_epochs: 20
+lr: 1e-4
+weight_decay: 1e-3
+beta_recons: 0.5
+recons_loss: iwmse  # choices: [mse, l1, iwmse]
+alpha_mse: 2.0
+ema_decay: 0.9999
+
+# Training mode flags
+train_vae_from_checkpoint: false
+train_vae_from_scratch: true
+train_diff_from_checkpoint: false
+train_diff_from_scratch: true
+
+# Model paths
+pretrained_vae_path: null
+pretrained_diff_path: null
+
+# Annealing settings
+use_annealing: true
+annealing_shape: cosine  # choices: [linear, cosine, logistic]

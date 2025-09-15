@@ -15,8 +15,6 @@ from utils import print_color, prepare_state_dict, create_args_compatibility
 from plot import generate_vae_samples, generate_diff_samples
 from data_preprocessing import create_train_val_datasets_zarr_split
 
-
-
 def print_main(accelerator, message, color="white"):
     if accelerator.is_main_process:
         print_color(message, color)
@@ -34,7 +32,6 @@ def run(cfg: DictConfig) -> None:
  
     # Create a shared variable to store the values (pass args, not cfg!)
     directory, experiment_dict = prepare_state_dict(args, accelerator, out_dir)
-
 
     # Create datasets on all processes (using same seed ensures consistency)
     train_dataset, val_dataset = create_train_val_datasets_zarr_split(
@@ -63,11 +60,6 @@ def run(cfg: DictConfig) -> None:
             }
         },
     )
-
-    print(out_dir, directory, args.data_path)
-    import sys;
-    sys.exit()
-
         
     if args.train_vae_from_checkpoint and args.pretrained_vae_path is None:
         raise ValueError("Please provide a path to the pretrained VAE model using pretrained_vae_path")
@@ -79,7 +71,7 @@ def run(cfg: DictConfig) -> None:
     # Use original logic with args object
     if not args.diff or args.latent_diff: 
         # Train a VAE or VQ model either for generative modeling or to train A vae model for latent diffusion.
-        print_main(accelerator, f"Running experiment {model_id} with model {args.model_name}", "blue")
+        print_main(accelerator, f"Running experiment {args.model_name}", "blue")
         if args.model_name == "vae_kl":
              from train_utils.trainers import TrainerVAE as trainer
         else:

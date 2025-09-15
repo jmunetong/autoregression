@@ -105,11 +105,14 @@ def create_experiment_id(model_name="vae", data_id=522):
 def create_directory(output_path, model_name, data_id):
     #TODO: FIX THIS SINCE WE ARE TRYING TO ACCESS THE MODEL FROM THIS SETUP 
     
-    model_name = f'{model_name}_d{data_id}'
-    directory = os.path.join(output_path, model_name)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    return directory
+    # model_name = f'{model_name}_d{data_id}'
+    # directory = os.path.join(output_path, model_name)
+    # if not os.path.exists(directory):
+    #     os.makedirs(directory)
+    # return directory
+    os.makedirs(output_path, exist_ok=True)
+    return output_path
+    
 
 def print_color(text, color="default"):
     colors = {
@@ -249,25 +252,25 @@ def create_args_compatibility(cfg: DictConfig):
     args.latent_channels = getattr(cfg.model, 'latent_channels', 4)
     
     # Training parameters
-    args.batch_size = cfg.training.batch_size
-    args.test_pipeline = cfg.training.test_pipeline
-    args.num_epochs = cfg.training.num_epochs
-    args.lr = cfg.training.lr
-    args.weight_decay = cfg.training.weight_decay
-    args.beta_recons = cfg.training.beta_recons
-    args.recons_loss = cfg.training.recons_loss
-    args.alpha_mse = cfg.training.alpha_mse
-    args.ema_decay = cfg.training.ema_decay
+    args.batch_size = cfg.experiment_type.batch_size
+    args.test_pipeline = cfg.experiment_type.test_pipeline
+    args.num_epochs = cfg.experiment_type.num_epochs
+    args.lr = cfg.experiment_type.lr
+    args.weight_decay = cfg.experiment_type.weight_decay
+    args.beta_recons = cfg.experiment_type.beta_recons
+    args.recons_loss = cfg.experiment_type.recons_loss
+    args.alpha_mse = cfg.experiment_type.alpha_mse
+    args.ema_decay = cfg.experiment_type.ema_decay
     
     # Training mode flags
-    args.train_vae_from_checkpoint = cfg.training.train_vae_from_checkpoint
-    args.train_vae_from_scratch = cfg.training.train_vae_from_scratch
-    args.train_diff_from_checkpoint = cfg.training.train_diff_from_checkpoint
-    args.train_diff_from_scratch = cfg.training.train_diff_from_scratch
-    args.pretrained_vae_path = cfg.training.pretrained_vae_path
-    args.pretrained_diff_path = cfg.training.pretrained_diff_path
-    args.use_annealing = cfg.training.use_annealing
-    args.annealing_shape = cfg.training.annealing_shape
+    args.train_vae_from_checkpoint = cfg.experiment_type.train_vae_from_checkpoint
+    args.train_vae_from_scratch = cfg.experiment_type.train_vae_from_scratch
+    args.train_diff_from_checkpoint = cfg.experiment_type.train_diff_from_checkpoint
+    args.train_diff_from_scratch = cfg.experiment_type.train_diff_from_scratch
+    args.pretrained_vae_path = cfg.experiment_type.pretrained_vae_path
+    args.pretrained_diff_path = cfg.experiment_type.pretrained_diff_path
+    args.use_annealing = cfg.experiment_type.use_annealing
+    args.annealing_shape = cfg.experiment_type.annealing_shape
     
     # Data parameters
     args.data_id = cfg.data.data_id

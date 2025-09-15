@@ -1,0 +1,2 @@
+- model=vae_kl
+- experiment_type=test

@@ -1,16 +1,11 @@
-# configs/config.yaml
 defaults:
   - model: vae_kl
-  - training: default
+  - experiment_type: default
   - data: default
   - inference: default
   - _self_
 
-# Override any defaults here if needed
-# hydra:
-#   run:
-#     # final per-run output folder
-#     dir: ${exp.root}/${exp.name}
-#   # where Hydra writes config.yaml, hydra.yaml, overrides.yaml inside run dir
-#   # set to null to put them directly in run dir
-#   output_subdir: .hydra
+hydra:
+  run:
+    dir: output/${hydra:runtime.choices.model}${experiment_type.test_suffix}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  # output_subdir: .hydra
