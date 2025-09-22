@@ -1,4 +1,9 @@
 import os
+# CRITICAL: Set these BEFORE any torch/accelerate imports
+os.environ['TORCH_DISTRIBUTED_BACKEND'] = 'gloo'
+os.environ['NCCL_DISABLED'] = '1'
+os.environ['TORCH_NCCL_BLOCKING_WAIT'] = '0'
+
 import json
 from omegaconf import DictConfig, OmegaConf
 import hydra
@@ -14,6 +19,8 @@ from train_utils.configs import *
 from utils import print_color, prepare_state_dict, create_args_compatibility
 from plot import generate_vae_samples, generate_diff_samples
 from data_preprocessing import create_train_val_datasets_zarr_split
+
+
 
 def print_main(accelerator, message, color="white"):
     if accelerator.is_main_process:
@@ -158,4 +165,5 @@ def run(cfg: DictConfig) -> None:
 
 
 if __name__ == '__main__':
+    print("Running Experiment")
     run()

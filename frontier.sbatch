@@ -122,15 +122,15 @@ run_experiment() {
 echo "Starting experiment sweep across 10 nodes (80 GPUs total)..."
 echo "WARNING: Running multiple experiments sequentially on 80 GPUs - consider parallelizing"
 
-# Option 1: Run experiments sequentially (current approach)
-for dataset in "${DATASETS[@]}"; do
-    for loss in "${LOSSES[@]}"; do
-        run_experiment $KL_MODEL $dataset $loss $BATCH_SIZE $NUM_EPOCHS $LATENT_CHANNELS
+# # Option 1: Run experiments sequentially (current approach)
+# for dataset in "${DATASETS[@]}"; do
+#     for loss in "${LOSSES[@]}"; do
+#         run_experiment $KL_MODEL $dataset $loss $BATCH_SIZE $NUM_EPOCHS $LATENT_CHANNELS
         
-        # Add delay between experiments for system stability
-        sleep 10
-    done
-done
+#         # Add delay between experiments for system stability
+#         sleep 10
+#     done
+# done
 
 # Option 2: Uncomment below to run experiments in parallel (advanced)
 # This would require modifying the function to handle different output directories

@@ -6,7 +6,6 @@ test_pipeline: false
 # Simple approach - set suffix as string directly
 test_suffix: ""
 
-
 num_epochs: 20
 lr: 1e-4
 weight_decay: 1e-3

@@ -1,0 +1,16 @@
+# accelerate_config_single.yaml - Configuration for 1 GPU
+compute_environment: LOCAL_MACHINE
+distributed_type: NO  # Single GPU, no distribution needed
+downcast_bf16: 'no'
+gpu_ids: all
+machine_rank: 0
+main_training_function: main
+mixed_precision: bf16  # Use bfloat16 for AMD GPUs
+num_machines: 1        # 1 node
+num_processes: 1       # 1 GPU total
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false

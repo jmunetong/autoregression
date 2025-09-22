@@ -192,3 +192,8 @@ experiment_backup/
 sample/
 test_files/
 outputs/
+core.19836.3788207.pt_main_thread.11.1758202435
+node-v20.11.1-linux-x64.tar.xz
+node-v20.11.1-linux-x64/
+slurm/
+output/
