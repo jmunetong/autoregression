@@ -1,4 +1,4 @@
 # configs/inference/default.yaml
 inference: false
-generate_samples: false
+generate_samples: true
 num_samples: 10

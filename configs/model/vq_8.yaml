@@ -1,0 +1,4 @@
+# configs/model/vq.yaml  
+model_name: vq
+latent_channels: 8
+latent_diff: false   # Explicitly set to true for latent diffusion

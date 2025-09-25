@@ -252,7 +252,7 @@ def create_args_compatibility(cfg: DictConfig):
     args.latent_channels = getattr(cfg.model, 'latent_channels', 4)
     
     # Training parameters
-    args.batch_size = cfg.experiment_type.batch_size
+    args.batch_size = cfg.data.batch_size
     args.test_pipeline = cfg.experiment_type.test_pipeline
     args.num_epochs = cfg.experiment_type.num_epochs
     args.lr = cfg.experiment_type.lr

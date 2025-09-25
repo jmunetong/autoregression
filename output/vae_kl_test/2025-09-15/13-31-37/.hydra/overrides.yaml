@@ -1,4 +1,0 @@
-- model=vae_kl
-- experiment_type=test
-- experiment_type.recons_loss=l1
-- data.data_id=522

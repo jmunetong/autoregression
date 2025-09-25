@@ -1,7 +1,7 @@
 defaults:
   - model: vae_kl
   - experiment_type: default
-  - data: default
+  - data: full
   - inference: default
   - _self_
 

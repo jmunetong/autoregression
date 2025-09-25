@@ -1,0 +1,5 @@
+
+# configs/model/vae_kl.yaml
+model_name: vae_kl
+latent_channels: 8
+latent_diff: false   # Explicitly set to true for latent diffusion

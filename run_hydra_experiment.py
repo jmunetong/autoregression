@@ -1,8 +1,4 @@
 import os
-# CRITICAL: Set these BEFORE any torch/accelerate imports
-os.environ['TORCH_DISTRIBUTED_BACKEND'] = 'gloo'
-os.environ['NCCL_DISABLED'] = '1'
-os.environ['TORCH_NCCL_BLOCKING_WAIT'] = '0'
 
 import json
 from omegaconf import DictConfig, OmegaConf
@@ -29,8 +25,55 @@ def print_main(accelerator, message, color="white"):
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def run(cfg: DictConfig) -> None:
-    # Ensure results directory exists
-    accelerator = Accelerator(log_with="wandb")
+    # Let Accelerate auto-detect everything from SLURM environment
+    # It will automatically figure out multi-node setup from WORLD_SIZE, RANK, etc.
+    accelerator = Accelerator(
+        log_with="wandb",
+        mixed_precision="bf16"  # You can still specify key parameters directly
+    )
+    
+    print(f"Accelerator detected: {accelerator.num_processes} processes, device: {accelerator.device}")
+    print(f"Distributed type: {accelerator.distributed_type}")
+    
+    # Add debugging information for multi-node setup
+    print(f"🚀 Process {accelerator.process_index}/{accelerator.num_processes} on device {accelerator.device} (node: {os.environ.get('SLURM_NODEID', 'unknown')})")
+    
+    if accelerator.is_main_process:
+        print(f"✅ Total processes: {accelerator.num_processes}")
+        print(f"✅ Distributed type: {accelerator.distributed_type}")
+        print(f"✅ Main process device: {accelerator.device}")
+        print(f"✅ Expected processes: 2 nodes × 8 GPUs = 16 total")
+        
+        # Print environment variables for debugging
+        print("🔧 Environment variables:")
+        print(f"   MASTER_ADDR: {os.environ.get('MASTER_ADDR', 'Not set')}")
+        print(f"   MASTER_PORT: {os.environ.get('MASTER_PORT', 'Not set')}")
+        print(f"   WORLD_SIZE: {os.environ.get('WORLD_SIZE', 'Not set')}")
+        print(f"   RANK: {os.environ.get('RANK', 'Not set')}")
+        print(f"   LOCAL_RANK: {os.environ.get('LOCAL_RANK', 'Not set')}")
+    
+    # Test communication across all GPUs
+    accelerator.wait_for_everyone()
+    
+    if accelerator.is_main_process:
+        print("✅ All processes synchronized successfully!")
+    
+    # Optional: Test inter-GPU communication with a simple operation
+    if torch.cuda.is_available():
+        # Create a tensor on each GPU with the process index
+        test_tensor = torch.ones(1, device=accelerator.device) * accelerator.process_index
+        
+        # All-reduce operation (sums across all GPUs)
+        if dist.is_initialized():
+            dist.all_reduce(test_tensor)
+            
+            if accelerator.is_main_process:
+                expected_sum = sum(range(accelerator.num_processes))  # Should be 0+1+2+...+15 = 120
+                print(f"🧪 Communication test: {test_tensor.item():.0f} (expected: {expected_sum})")
+                if abs(test_tensor.item() - expected_sum) < 1e-6:
+                    print("✅ Multi-node communication working!")
+                else:
+                    print("❌ Communication test failed!")
     
     # Create compatibility layer - convert Hydra config to args-like object
     args = create_args_compatibility(cfg)
