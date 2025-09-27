@@ -1,7 +1,7 @@
 # configs/model/vq.yaml  
 model_name: vq
 latent_channels: 4
-latent_diff: false   # Explicitly set to true for latent diffusion
+latent_diff: true   # Explicitly set to true for latent diffusion
 depth: 8
 dim_head: 1024
 heads: 8

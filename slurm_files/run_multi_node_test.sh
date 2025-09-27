@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --account=mph121
 #SBATCH --partition=batch
-#SBATCH --qos=normal
-#SBATCH --time=04:00:00
-#SBATCH --nodes=100
+#SBATCH --qos=debug
+#SBATCH --time=00:10:00
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH --gpus-per-node=8
-#SBATCH --job-name=vae_8
-#SBATCH --output=slurm/vae_522-%j.out
-#SBATCH --error=slurm/vae_522-%j.err
+#SBATCH --job-name=debug
+#SBATCH --output=slurm/debug_run-%j.out
+#SBATCH --error=slurm/debug_run-%j.err
 #SBATCH --mail-type=END,FAIL  
 #SBATCH --mail-user=jmuneton@stanford.edu
 
@@ -172,7 +172,7 @@ echo \"Process \$SLURM_PROCID on node \$(hostname): LOCAL_RANK=\$SLURM_LOCALID, 
 python run_hydra_experiment.py \
     model=vae_kl \
     experiment_type=$EXPERIMENT_TYPE \
-    experiment_type.recons_loss=l1 \
+    experiment_type.recons_loss=mse \
     data=full
 "
 

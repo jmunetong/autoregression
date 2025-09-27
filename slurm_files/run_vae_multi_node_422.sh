@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --account=mph121
 #SBATCH --partition=batch
-#SBATCH --qos=debug
-#SBATCH --time=02:00:00
-#SBATCH --nodes=1
+#SBATCH --qos=normal
+#SBATCH --time=04:00:00
+#SBATCH --nodes=100
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH --gpus-per-node=8
-#SBATCH --job-name=test_multi_gpu
-#SBATCH --output=slurm/multi_gpu-%j.out
-#SBATCH --error=slurm/multi_gpu-%j.err
+#SBATCH --job-name=test_vae_422
+#SBATCH --output=slurm/vae_422-%j.out
+#SBATCH --error=slurm/vae_422-%j.err
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-user=jmuneton@stanford.edu
 
@@ -115,8 +115,8 @@ accelerate launch --config_file $ACCELERATE_CONFIG_FILE \
     run_hydra_experiment.py \
     model=vae_kl \
     experiment_type=$EXPERIMENT_TYPE \
-    experiment_type.recons_loss=iwmse \
-    data.data_id=522
+    experiment_type.recons_loss=mse \
+    data.data_id=422
 
 echo "Multi-GPU experiment completed"
 echo "Logs saved to: $WANDB_DIR"
