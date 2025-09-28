@@ -115,8 +115,7 @@ ACCELERATE_CONFIG_FILE="accelerate_config/singlegpu_config.yaml"
 accelerate launch --config_file $ACCELERATE_CONFIG_FILE \
     run_hydra_experiment.py \
     model=vae_kl \
-    experiment_type=$EXPERIMENT_TYPE \
-    experiment_type.recons_loss=iwmse \
+    experiment_type=${EXPERIMENT_TYPE}_iwmse
     data=full
 
 echo "Multi-GPU experiment completed"

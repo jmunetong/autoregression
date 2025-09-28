@@ -171,8 +171,7 @@ echo \"Process \$SLURM_PROCID on node \$(hostname): LOCAL_RANK=\$SLURM_LOCALID, 
 # Your Python script handles Accelerator() internally
 python run_hydra_experiment.py \
     model=vae_kl \
-    experiment_type=$EXPERIMENT_TYPE \
-    experiment_type.recons_loss=mse \
+    experiment_type=${EXPERIMENT_TYPE}_iwmse \
     data=full
 "
 

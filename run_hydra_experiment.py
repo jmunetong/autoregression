@@ -208,5 +208,4 @@ def run(cfg: DictConfig) -> None:
 
 
 if __name__ == '__main__':
-    print("Running Experiment")
     run()
