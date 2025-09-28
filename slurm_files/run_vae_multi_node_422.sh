@@ -116,7 +116,7 @@ accelerate launch --config_file $ACCELERATE_CONFIG_FILE \
     model=vae_kl \
     experiment_type=$EXPERIMENT_TYPE \
     experiment_type.recons_loss=mse \
-    data.data_id=422
+    data=full_422
 
 echo "Multi-GPU experiment completed"
 echo "Logs saved to: $WANDB_DIR"

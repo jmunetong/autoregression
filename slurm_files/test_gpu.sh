@@ -123,6 +123,6 @@ accelerate launch --config_file $ACCELERATE_CONFIG_FILE \
     model=vae_kl \
     experiment_type=$EXPERIMENT_TYPE \
     experiment_type.recons_loss=iwmse \
-    data.data_id=522
+    data=full
 
 echo "Multi-GPU experiment completed"
