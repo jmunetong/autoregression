@@ -529,7 +529,7 @@ class ImageAutoregressiveDiffusion(Module):
             max_seq_len = num_patches,
             reshape_to_img = self.to_image,
             reshape_to_seq = self.to_tokens
-        )
+        ) #TODO:Integrate diffusion-based kwargs into this part so that we can modify them accordingly when training 
 
         
 

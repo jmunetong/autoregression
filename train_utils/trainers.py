@@ -534,7 +534,8 @@ class TrainerDiffusionNonVAE(BaseTrainer):
         diff_model, self.model_config = init_configure_diffusion(
             vit_size=args.vit_size,
             patch_size=args.patch_size,
-            input_shape=input_shape[-1] # Assuming input shape is (1, height, width)
+            input_shape=input_shape[-1], # Assuming input shape is (1, height, width),
+            diffusion_kwargs=args.diff_args
         )
         super().__init__(model=diff_model, args=args, accelerator=accelerator, len_dataloader=len_train_dataloader)
         

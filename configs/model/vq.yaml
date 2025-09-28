@@ -2,24 +2,3 @@
 model_name: vq
 latent_channels: 4
 latent_diff: false   # Explicitly set to true for latent diffusion
-depth: 8
-dim_head: 1024
-heads: 8
-mlp_depth: 3
-mlp_width: null
-dim_input: null
-decoder_kwargs: {}
-mlp_kwargs: {}
-diffusion_kwargs:
-  clamp_during_sampling: true
-  num_sample_steps: 64  # number of sampling steps
-  sigma_min: 0.002      # min noise level
-  sigma_max: 10         # max noise level
-  sigma_data: 0.5       # standard deviation of data distribution
-  rho: 7                # controls the sampling schedule
-  P_mean: -1.2          # mean of log-normal distribution from which noise is drawn for training
-  P_std: 0.8            # standard deviation of log-normal distribution from which noise is drawn for training
-  S_churn: 5            # parameters for stochastic sampling - depends on dataset, Table 5 in paper
-  S_tmin: 0.05
-  S_tmax: 50
-  S_noise: 1.003
