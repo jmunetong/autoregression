@@ -294,7 +294,8 @@ def create_args_compatibility(cfg: DictConfig):
     args.patch_size = getattr(cfg.model, 'patch_size', 16)
     args.vit_size = getattr(cfg.model, 'vit_size', 'base')
     if args.diff:
-        args.diff_args = cfg.model.diffusion_kwargs 
+        from omegaconf import OmegaConf
+        args.diff_args = OmegaConf.to_container(cfg.model.diffusion_kwargs, resolve=True)
         assert isinstance(args.diff_args, dict), "Incorrect type must be a dictionary for arguments to be passed into model"
 
     # Legacy compatibility attributes (in case they're referenced elsewhere)
