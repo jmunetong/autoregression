@@ -293,6 +293,8 @@ def create_args_compatibility(cfg: DictConfig):
     args.diff_epochs = getattr(cfg.model, 'diff_epochs', 10)
     args.patch_size = getattr(cfg.model, 'patch_size', 16)
     args.vit_size = getattr(cfg.model, 'vit_size', 'base')
+    if args.diff:
+        args.diff_args = cfg.model.diffusion_kw_args #TODO: Add these arguments inside this function to be able to provide diffusion model with customization to whatever it is necessary
 
     
     # Legacy compatibility attributes (in case they're referenced elsewhere)
