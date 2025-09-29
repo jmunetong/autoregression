@@ -195,6 +195,211 @@ Where:
 | **Memory Usage** | Lower | Higher (stores codebook) |
 | **Best Use Cases** | Smooth patterns, interpolation | Sharp peaks, classification |
 
+### Diffusion Models: Probabilistic Denoising for High-Quality Generation
+
+#### Mathematical Foundation
+
+Diffusion models represent a paradigm shift in generative modeling, inspired by non-equilibrium thermodynamics. Instead of learning a direct mapping from noise to data (like VAEs) or adversarial training (like GANs), diffusion models learn to gradually transform pure noise into meaningful data through a carefully designed denoising process.
+
+**Core Principle:**
+The key insight is to model data generation as the reverse of a corruption process. We systematically add noise to data, then learn to reverse this process step by step.
+
+#### Forward Diffusion Process (Data Corruption)
+
+The forward process transforms clean X-ray diffraction patterns into pure Gaussian noise through a fixed Markov chain:
+
+$$q(\mathbf{x}_{1:T}|\mathbf{x}_0) = \prod_{t=1}^T q(\mathbf{x}_t|\mathbf{x}_{t-1})$$
+
+$$q(\mathbf{x}_t|\mathbf{x}_{t-1}) = \mathcal{N}(\mathbf{x}_t; \sqrt{1-\beta_t}\mathbf{x}_{t-1}, \beta_t \mathbf{I})$$
+
+Where:
+- **$\mathbf{x}_0$**: Original diffraction pattern
+- **$\mathbf{x}_t$**: Noisy version at timestep $t$
+- **$\beta_t$**: Noise schedule controlling corruption rate
+- **$T$**: Total number of diffusion steps (typically 1000)
+
+**Closed-Form Forward Sampling:**
+Using the reparameterization trick, we can sample any intermediate state directly:
+
+$$\mathbf{x}_t = \sqrt{\bar{\alpha}_t}\mathbf{x}_0 + \sqrt{1-\bar{\alpha}_t}\boldsymbol{\epsilon}$$
+
+Where:
+- **$\alpha_t = 1 - \beta_t$**
+- **$\bar{\alpha}_t = \prod_{s=1}^t \alpha_s$** (cumulative product)
+- **$\boldsymbol{\epsilon} \sim \mathcal{N}(0, \mathbf{I})$**: Random noise
+
+This allows efficient training without simulating the entire forward chain.
+
+#### Reverse Diffusion Process (Denoising Generation)
+
+The reverse process learns to undo the corruption, transforming noise back into meaningful diffraction patterns:
+
+$$p_\theta(\mathbf{x}_{0:T}) = p(\mathbf{x}_T) \prod_{t=1}^T p_\theta(\mathbf{x}_{t-1}|\mathbf{x}_t)$$
+
+$$p_\theta(\mathbf{x}_{t-1}|\mathbf{x}_t) = \mathcal{N}(\mathbf{x}_{t-1}; \boldsymbol{\mu}_\theta(\mathbf{x}_t, t), \boldsymbol{\Sigma}_\theta(\mathbf{x}_t, t))$$
+
+**Neural Network Parameterization:**
+Instead of directly predicting $\boldsymbol{\mu}_\theta$, it's more effective to predict the noise:
+
+$$\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t) \approx \boldsymbol{\epsilon}$$
+
+The mean is then computed as:
+$$\boldsymbol{\mu}_\theta(\mathbf{x}_t, t) = \frac{1}{\sqrt{\alpha_t}}\left(\mathbf{x}_t - \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)\right)$$
+
+#### Training Objective
+
+**Simplified Loss Function:**
+The diffusion model training reduces to a simple denoising objective:
+
+$$\mathcal{L}_{\text{simple}} = \mathbb{E}_{t,\mathbf{x}_0,\boldsymbol{\epsilon}}\left[\|\boldsymbol{\epsilon} - \boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)\|^2\right]$$
+
+Where:
+- **$t \sim \text{Uniform}(1, T)$**: Random timestep
+- **$\mathbf{x}_0 \sim q(\mathbf{x}_0)$**: Clean diffraction pattern from dataset
+- **$\boldsymbol{\epsilon} \sim \mathcal{N}(0, \mathbf{I})$**: Random noise
+- **$\mathbf{x}_t$**: Noisy version computed using forward process
+
+**Training Algorithm:**
+1. Sample a clean diffraction pattern $\mathbf{x}_0$
+2. Sample a random timestep $t$
+3. Sample noise $\boldsymbol{\epsilon}$ and create $\mathbf{x}_t$
+4. Train network $\boldsymbol{\epsilon}_\theta$ to predict the noise
+5. Compute loss and backpropagate
+
+#### Noise Scheduling for X-ray Diffraction
+
+The noise schedule $\beta_t$ is crucial for diffusion quality. For diffraction patterns with sharp peaks and varying intensities:
+
+**Linear Schedule:**
+$$\beta_t = \beta_1 + \frac{t-1}{T-1}(\beta_T - \beta_1)$$
+
+**Cosine Schedule (often better for images):**
+$$\bar{\alpha}_t = \frac{f(t)}{f(0)}, \quad f(t) = \cos\left(\frac{t/T + s}{1 + s} \cdot \frac{\pi}{2}\right)^2$$
+
+**For X-ray Diffraction:**
+- **$\beta_1 = 1 \times 10^{-4}$**: Small initial noise preserves fine details
+- **$\beta_T = 0.02$**: Complete corruption at final step
+- **$T = 1000$**: Standard number of diffusion steps
+
+#### Sampling Process (Generation)
+
+To generate new diffraction patterns, we reverse the diffusion process:
+
+**DDPM Sampling:**
+```
+1. Start with pure noise: x_T ~ N(0, I)
+2. For t = T, T-1, ..., 1:
+   a. Predict noise: ε_θ(x_t, t)
+   b. Compute mean: μ_θ(x_t, t)
+   c. Sample: x_{t-1} ~ N(μ_θ(x_t, t), β_t I)
+3. Return x_0 (generated diffraction pattern)
+```
+
+**Faster Sampling (DDIM):**
+DDIM enables deterministic sampling with fewer steps (e.g., 50 instead of 1000):
+
+$$\mathbf{x}_{t-1} = \sqrt{\bar{\alpha}_{t-1}}\left(\frac{\mathbf{x}_t - \sqrt{1-\bar{\alpha}_t}\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)}{\sqrt{\bar{\alpha}_t}}\right) + \sqrt{1-\bar{\alpha}_{t-1}}\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)$$
+
+#### Benefits for X-ray Diffraction
+
+**1. High-Quality Generation:**
+- No mode collapse (unlike GANs)
+- Captures fine diffraction peak structures
+- Handles multi-modal crystal distributions
+
+**2. Stable Training:**
+- No adversarial training dynamics
+- Robust to hyperparameter choices
+- Scales well with model size
+
+**3. Controllable Generation:**
+- Classifier guidance for conditional generation
+- Inpainting capabilities for incomplete patterns
+- Interpolation between different crystal structures
+
+#### Autoregressive Diffusion Framework
+
+Recent advances combine diffusion with autoregressive modeling for enhanced control over generation. Instead of generating entire diffraction patterns at once, **Autoregressive Diffusion** generates patterns sequentially, token by token or region by region.
+
+**Key Innovation (Li et al. 2024):**
+Traditional autoregressive models use discrete tokens and categorical cross-entropy loss. The new approach uses a **Diffusion Loss function** to enable autoregressive modeling in continuous space:
+
+$$\mathcal{L}_{\text{AR-Diff}} = \sum_{i=1}^{N} \mathbb{E}_{t,\boldsymbol{\epsilon}}\left[\|\boldsymbol{\epsilon} - \boldsymbol{\epsilon}_\theta(\mathbf{x}_{t,i}|\mathbf{x}_{<i}, t)\|^2\right]$$
+
+Where:
+- **$\mathbf{x}_{<i}$**: Previously generated tokens/patches
+- **$\mathbf{x}_{t,i}$**: Noisy version of current token at timestep $t$
+- **$N$**: Total number of tokens/patches
+
+**Benefits for X-ray Diffraction:**
+- **Structured Generation**: Respects crystallographic relationships between different regions
+- **Conditional Control**: Can generate specific diffraction features given partial patterns
+- **Memory Efficiency**: Generates high-resolution patterns incrementally
+- **Physical Constraints**: Easier to enforce symmetry and intensity constraints
+
+#### Latent Diffusion: Combining VAE and Diffusion Efficiency
+
+**The Latent Diffusion Alternative:**
+Instead of applying diffusion directly to high-resolution diffraction patterns, we can combine the representational power of VAEs/VQ-VAEs with diffusion's generation quality:
+
+**Two-Stage Process:**
+1. **Stage 1**: Train a VAE or VQ-VAE to learn a compact latent representation of diffraction patterns
+2. **Stage 2**: Train a diffusion model in the learned latent space
+
+**Mathematical Formulation:**
+$$\mathbf{z}_0 = \text{Encoder}(\mathbf{x}_0) \quad \text{(VAE/VQ-VAE encoding)}$$
+$$\mathbf{z}_t = \sqrt{\bar{\alpha}_t}\mathbf{z}_0 + \sqrt{1-\bar{\alpha}_t}\boldsymbol{\epsilon} \quad \text{(Latent diffusion)}$$
+$$\hat{\mathbf{x}}_0 = \text{Decoder}(\hat{\mathbf{z}}_0) \quad \text{(Reconstruction)}$$
+
+**Advantages for X-ray Diffraction:**
+
+**1. Computational Efficiency:**
+- Diffusion operates in compressed latent space (e.g., 64×64 instead of 512×512)
+- ~8x faster training and inference
+- Reduced memory requirements for high-resolution patterns
+
+**2. Quality Benefits:**
+- Combines VAE's reconstruction fidelity with diffusion's generation diversity
+- Better handling of sharp diffraction peaks through VAE preprocessing
+- Maintains fine crystallographic details
+
+**3. Practical Implementation:**
+- Can leverage pre-trained VAE/VQ-VAE models
+- Modular training: optimize representation and generation separately
+- Easier to incorporate domain-specific constraints in latent space
+
+**Latent Diffusion Training:**
+```python
+# Pseudo-code for latent diffusion training
+for diffraction_pattern in dataloader:
+    # Encode to latent space
+    z_0 = vae.encode(diffraction_pattern)
+    
+    # Sample timestep and noise
+    t = random.randint(1, T)
+    epsilon = torch.randn_like(z_0)
+    
+    # Add noise in latent space
+    z_t = sqrt(alpha_bar_t) * z_0 + sqrt(1 - alpha_bar_t) * epsilon
+    
+    # Predict noise in latent space
+    epsilon_pred = diffusion_model(z_t, t)
+    
+    # Compute loss
+    loss = F.mse_loss(epsilon, epsilon_pred)
+```
+
+#### Comparison: Direct vs. Latent Diffusion for X-ray Diffraction
+
+| Aspect | Direct Diffusion | Latent Diffusion |
+|--------|------------------|------------------|
+| **Training Speed** | Slow (high-res operations) | Fast (latent operations) |
+| **Memory Usage** | High | Low |
+| **Generation Quality** | Excellent detail preservation | Good quality + efficiency |
+| **Fine-tuning** | Requires full retraining | Can fine-tune components separately |
+| **Computational Cost** | ~8x higher | Baseline |
+| **Best Use Cases** | Maximum quality, unlimited compute | Production systems, large-scale |
+
 ## Project Structure
 
 ```
