@@ -7,9 +7,9 @@
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH --gpus-per-node=8
-#SBATCH --job-name=vq_run_422
-#SBATCH --output=slurm/vq_422-%j.out
-#SBATCH --error=slurm/vq_422-%j.err
+#SBATCH --job-name=vq_run_522_l1
+#SBATCH --output=slurm/vq_522-%j.out
+#SBATCH --error=slurm/vq_522-%j.err
 #SBATCH --mail-type=END,FAIL  
 #SBATCH --mail-user=jmuneton@stanford.edu
 
@@ -171,8 +171,8 @@ echo \"Process \$SLURM_PROCID on node \$(hostname): LOCAL_RANK=\$SLURM_LOCALID, 
 # Your Python script handles Accelerator() internally
 python run_hydra_experiment.py \
     model=vq \
-    experiment_type=${EXPERIMENT_TYPE}_iwmse \
-    data=full_422
+    experiment_type=${EXPERIMENT_TYPE}_l1\
+    data=full
 "
 
 echo "Multi-node experiment completed"

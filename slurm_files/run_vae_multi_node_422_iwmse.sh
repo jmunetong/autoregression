@@ -7,7 +7,7 @@
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH --gpus-per-node=8
-#SBATCH --job-name=vae_422
+#SBATCH --job-name=vae_422_iwmse
 #SBATCH --output=slurm/vae_422-%j.out
 #SBATCH --error=slurm/vae_422-%j.err
 #SBATCH --mail-type=BEGIN
