@@ -2,7 +2,7 @@
 #SBATCH --account=mph121
 #SBATCH --partition=batch
 #SBATCH --qos=debug
-#SBATCH --time=02:00:00
+#SBATCH --time=00:15:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=7

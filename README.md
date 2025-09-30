@@ -1641,6 +1641,71 @@ if dist.is_initialized():
             print("Multi-node communication working!")
 ```
 
+### 5.4 Debugging with Test Mode
+
+All SLURM scripts in `slurm_files/` support a `test` flag for quick end-to-end pipeline validation. The test mode automatically:
+- Sets `qos=debug` for faster queue scheduling
+- Limits resources to 1 node with 15-minute time limit for rapid testing
+- Runs a shortened training pipeline to verify functionality
+- Tests GPU availability and basic functionality
+- Validates data loading and model initialization
+
+**Usage Examples:**
+
+```bash
+# Test VAE training with IWMSE loss on 522 dataset
+sbatch slurm_files/run_vae_multi_node_iwmse.sh test
+
+# Test VQ-VAE with L1 loss and 8 channels
+sbatch slurm_files/run_vq_multi_node_l1_8.sh test
+
+# Test diffusion model on 422 dataset
+sbatch slurm_files/run_diff_multi_node_422.sh test
+
+# Test single GPU VAE training
+sbatch slurm_files/run_vae_single_gpu.sh test
+```
+
+**What happens in test mode:**
+- Job runs with `--qos=debug` (faster scheduling, 15-minute limit)
+- Resources limited to 1 node (8 GPUs) for rapid testing
+- Training limited to 2-3 epochs for quick validation
+- Reduced batch sizes to minimize resource usage
+- Enhanced logging for debugging training pipeline
+- GPU functionality and communication tests
+- Model checkpoint saving/loading verification
+
+**When to use test mode:**
+- Before submitting long production runs
+- After modifying training scripts or configurations
+- Debugging multi-node communication issues
+- Validating new model architectures
+- Testing on new datasets or loss functions
+
+**Example debug output:**
+```
+=== SLURM Debug Mode Activated ===
+QoS: debug (15-minute limit)
+Nodes: 1, GPUs per node: 8, Total GPUs: 8
+Dataset: 522, Loss: iwmse, Channels: 4
+Running shortened pipeline: 2 epochs
+
+=== GPU Functionality Test ===
+✓ All 8 GPUs detected and available
+✓ GPU memory allocation successful
+✓ Multi-GPU communication working
+✓ Data loading successful
+
+=== Training Pipeline Test ===
+Epoch 1/2: Loss=0.234, Time=25s
+Epoch 2/2: Loss=0.189, Time=23s
+✓ Checkpoint saved successfully
+
+=== Debug Mode Complete ===
+Pipeline validation successful!
+Ready for production run.
+```
+
 ## Part 6: Best Practices and Optimization
 
 ### 6.1 Memory Optimization
