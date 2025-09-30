@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-task=7
 #SBATCH --gpus-per-node=8
 #SBATCH --job-name=vae_4_iwmse
-#SBATCH --output=slurm/vae_522-%j.out
-#SBATCH --error=slurm/vae_522-%j.err
+#SBATCH --output=slurm/vae_test-%j.out
+#SBATCH --error=slurm/vae_test-%j.err
 #SBATCH --mail-type=END,FAIL  
 #SBATCH --mail-user=jmuneton@stanford.edu
 
@@ -172,7 +172,7 @@ echo \"Process \$SLURM_PROCID on node \$(hostname): LOCAL_RANK=\$SLURM_LOCALID, 
 python run_hydra_experiment.py \
     model=vae_kl \
     experiment_type=${EXPERIMENT_TYPE}_iwmse \
-    data=full
+    data=pooling
 "
 
 echo "Multi-node experiment completed"
