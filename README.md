@@ -423,8 +423,31 @@ autoregression/
 │   ├── multigpu_config.yaml   # Multi-GPU single node
 │   └── multinode_config.yaml  # Multi-node setup
 ├── slurm_files/               # SLURM job scripts
-│   ├── run_diff_multi_node.sh # Diffusion multi-node training
-│   └── run_vae_multi_node.sh  # VAE multi-node training
+│   ├── run_diff_multi_node.sh # Diffusion multi-node training (522 dataset)
+│   ├── run_diff_multi_node_422.sh # Diffusion multi-node training (422 dataset)
+│   ├── run_multi_node_test.sh # Multi-node testing script
+│   ├── run_vae_multi_node_422_iwmse.sh # VAE 422 dataset, IWMSE loss
+│   ├── run_vae_multi_node_422_iwmse_8.sh # VAE 422 dataset, IWMSE loss, 8 channels
+│   ├── run_vae_multi_node_422_l1.sh # VAE 422 dataset, L1 loss
+│   ├── run_vae_multi_node_422_l1_8.sh # VAE 422 dataset, L1 loss, 8 channels
+│   ├── run_vae_multi_node_422_mse.sh # VAE 422 dataset, MSE loss
+│   ├── run_vae_multi_node_422_mse_8.sh # VAE 422 dataset, MSE loss, 8 channels
+│   ├── run_vae_multi_node_iwmse.sh # VAE 522 dataset, IWMSE loss
+│   ├── run_vae_multi_node_iwmse_8.sh # VAE 522 dataset, IWMSE loss, 8 channels
+│   ├── run_vae_multi_node_l1.sh # VAE 522 dataset, L1 loss
+│   ├── run_vae_multi_node_l1_8.sh # VAE 522 dataset, L1 loss, 8 channels
+│   ├── run_vae_multi_node_mse.sh # VAE 522 dataset, MSE loss
+│   ├── run_vae_multi_node_mse_8.sh # VAE 522 dataset, MSE loss, 8 channels
+│   ├── run_vae_single_gpu.sh # Single GPU VAE training
+│   ├── run_vq_multi_node_422_iwmse.sh # VQ-VAE 422 dataset, IWMSE loss
+│   ├── run_vq_multi_node_iwmse.sh # VQ-VAE 522 dataset, IWMSE loss
+│   ├── run_vq_multi_node_iwmse_8.sh # VQ-VAE 522 dataset, IWMSE loss, 8 channels
+│   ├── run_vq_multi_node_l1.sh # VQ-VAE 522 dataset, L1 loss
+│   ├── run_vq_multi_node_l1_8.sh # VQ-VAE 522 dataset, L1 loss, 8 channels
+│   ├── run_vq_multi_node_mse.sh # VQ-VAE 522 dataset, MSE loss
+│   ├── run_vq_multi_node_mse_8.sh # VQ-VAE 522 dataset, MSE loss, 8 channels
+│   ├── starter_experiment_template.sh # Template for new experiments
+│   └── test_gpu.sh # GPU functionality test script
 ├── run_hydra_experiment.py    # Main training script
 └── frontier.sbatch           # ORNL Frontier job template
 ```
